@@ -1,4 +1,5 @@
 #include "PointerConstraints.hpp"
+#include "../config/ConfigValue.hpp"
 #include "../desktop/view/WLSurface.hpp"
 #include "../desktop/state/FocusState.hpp"
 #include "../desktop/view/window/Window.hpp"
@@ -7,6 +8,7 @@
 #include "../managers/input/InputManager.hpp"
 #include "../render/Renderer.hpp"
 #include "../output/Monitor.hpp"
+#include "../xwayland/XWayland.hpp"
 
 CPointerConstraint::CPointerConstraint(SP<CZwpLockedPointerV1> resource_, SP<CWLSurfaceResource> surf, wl_resource* region_, zwpPointerConstraintsV1Lifetime lifetime_) :
     m_resourceLocked(resource_), m_locked(true), m_lifetime(lifetime_) {
@@ -33,8 +35,16 @@ CPointerConstraint::CPointerConstraint(SP<CZwpLockedPointerV1> resource_, SP<CWL
 
         m_positionHint     = {wl_fixed_to_double(x), wl_fixed_to_double(y)};
         const auto PWINDOW = Desktop::View::CWindow::fromView(m_hlSurface->view());
-        if (PWINDOW && PWINDOW->backend().isX11())
-            m_positionHint = PWINDOW->backend().bufferToSurfaceLocal(m_positionHint);
+        if (PWINDOW && PWINDOW->backend().isX11()) {
+            // older xwayland advertises its output scale through _XWAYLAND_GLOBAL_OUTPUT_SCALE and
+            // reports the hint in that scaled space. surfaceScale() only reflects
+            // xwayland:force_zero_scaling, so fall back to the advertised scale otherwise.
+            static auto PXWLFORCESCALEZERO = CConfigValue<Config::INTEGER>("xwayland:force_zero_scaling");
+
+            const auto  SCALE = *PXWLFORCESCALEZERO ? PWINDOW->backend().surfaceScale() : g_pXWayland->m_wm->getScale();
+            if (SCALE != 1.0)
+                m_positionHint = m_positionHint / SCALE;
+        }
 
         g_pInputManager->simulateMouseMovement();
     });
