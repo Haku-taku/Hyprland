@@ -1614,8 +1614,8 @@ SP<ITexture> IHyprRenderer::renderText(const std::string& text, CHyprColor col, 
 
 SP<ITexture> IHyprRenderer::renderText(Hyprgraphics::CTextResource::STextResourceData&& data) {
     auto res = makeAtomicShared<Hyprgraphics::CTextResource>(std::move(data));
-    g_pAsyncResourceGatherer->enqueue(res);
-    g_pAsyncResourceGatherer->await(res);
+
+    res->render();
 
     if (!res->m_asset.cairoSurface)
         return nullptr;
