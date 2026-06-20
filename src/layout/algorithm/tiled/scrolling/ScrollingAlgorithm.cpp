@@ -740,8 +740,9 @@ void CScrollingAlgorithm::newTarget(SP<ITarget> target) {
                 m_scrollingData->fitCol(droppingColumn);
             }
         } else {
-            auto idx = m_scrollingData->idx(droppingColumn);
-            auto col = idx == -1 ? m_scrollingData->add(width) : m_scrollingData->add(idx, width);
+            auto idx  = m_scrollingData->idx(droppingColumn);
+            auto colW = getColWidth();
+            auto col  = idx == -1 ? m_scrollingData->add(colW > 0 ? std::optional<float>(colW) : width) : m_scrollingData->add(idx, colW > 0 ? std::optional<float>(colW) : width);
             col->add(target);
             m_scrollingData->fitCol(col);
         }

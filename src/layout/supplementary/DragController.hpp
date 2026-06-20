@@ -26,6 +26,10 @@ namespace Layout::Supplementary {
         void           resetDragThresholdReached();
         bool           draggingTiled() const;
 
+        std::optional<float> draggingTiledColumnWidth() const {
+            return m_draggingTiledColumnWidth;
+        }
+
         /*
             Called to try to pick up window for dragging.
             Updates drag related variables and floats window if threshold reached.
@@ -49,6 +53,7 @@ namespace Layout::Supplementary {
         Vector2D            m_beginDragPositionXY;
         Vector2D            m_beginDragSizeXY;
         Vector2D            m_draggingWindowOriginalFloatSize;
+        std::optional<float> m_draggingTiledColumnWidth;
         Layout::eRectCorner m_grabbedCorner = sc<Layout::eRectCorner>(0) /* CORNER_NONE */;
     };
 };

@@ -137,6 +137,17 @@ namespace Layout::Tiled {
             INPUT_MODE_HARD
         };
 
+        void                        carryRemovedColumnWidth(SP<ITarget> target, std::optional<float> width) {
+            m_lastRemovedTarget      = target;
+            m_lastRemovedColumnWidth = width;
+        }
+        std::optional<float>        lastRemovedColumnWidth() const {
+            return m_lastRemovedColumnWidth;
+        }
+        SP<ITarget>                 lastRemovedTarget() const {
+            return m_lastRemovedTarget.lock();
+        }
+
       private:
         SP<SScrollingData>  m_scrollingData;
 

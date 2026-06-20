@@ -1,6 +1,8 @@
 #include "DragController.hpp"
 
 #include "../space/Space.hpp"
+#include "../algorithm/Algorithm.hpp"
+#include "../algorithm/tiled/scrolling/ScrollingAlgorithm.hpp"
 
 #include "../../Compositor.hpp"
 #include "../../managers/cursor/CursorShapeOverrideController.hpp"
@@ -70,6 +72,11 @@ bool CDragStateController::updateDragWindow() {
             DRAGGINGTARGET->setPositionGlobal(CBox{g_pInputManager->getMouseCoordsInternal() - DRAGGINGTARGET->position().size() / 2.F, DRAGGINGTARGET->position().size()});
             g_layoutManager->changeFloatingMode(DRAGGINGTARGET);
             m_draggingTiled = true;
+
+            if (DRAGGINGTARGET->space() && DRAGGINGTARGET->space()->algorithm()) {
+                if (const auto ALGO = dynamic_cast<Tiled::CScrollingAlgorithm*>(DRAGGINGTARGET->space()->algorithm()->tiledAlgo().get()); ALGO && ALGO->lastRemovedTarget() == DRAGGINGTARGET)
+                    m_draggingTiledColumnWidth = ALGO->lastRemovedColumnWidth();
+            }
         }
     }
 
@@ -210,6 +217,11 @@ void CDragStateController::dragEnd() {
     }
 
     if (m_draggingTiled) {
+        if (m_draggingTiledColumnWidth.has_value() && draggingTarget->space() && draggingTarget->space()->algorithm()) {
+            if (auto* ALGO = dynamic_cast<Tiled::CScrollingAlgorithm*>(draggingTarget->space()->algorithm()->tiledAlgo().get()))
+                ALGO->carryRemovedColumnWidth(draggingTarget, m_draggingTiledColumnWidth);
+        }
+
         // make sure to check if we are floating because drag into group could make us tiled already
         if (draggingTarget->floating())
             g_layoutManager->changeFloatingMode(draggingTarget);
@@ -225,6 +237,7 @@ void CDragStateController::dragEnd() {
 
     m_wasDraggingWindow = false;
     m_dragMode          = MBIND_INVALID;
+    m_draggingTiledColumnWidth.reset();
 }
 
 void CDragStateController::mouseMove(const Vector2D& mousePos) {
