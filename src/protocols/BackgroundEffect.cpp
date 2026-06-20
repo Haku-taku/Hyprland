@@ -34,7 +34,11 @@ void CBackgroundEffect::setResource(SP<CExtBackgroundEffectSurfaceV1> resource) 
             return;
         }
 
-        m_blurRegion = CWLRegionResource::fromResource(region)->m_region;
+        auto RG = CWLRegionResource::fromResource(region);
+        if (!RG)
+            return;
+
+        m_blurRegion = RG->m_region;
     });
 
     m_listeners.surfaceCommitted = m_surface->m_events.commit.listen([this] {
@@ -72,8 +76,8 @@ void CBackgroundEffect::destroy() {
     m_resource.reset();
     m_blurRegion.clear();
     // The spec requires effect removal to be double-buffered: state is cleared on next wl_surface commit.
-    // If the surface is already destroyed, clean up immediately.
-    if (!m_surface)
+    // If the surface is already destroyed or gone, clean up immediately.
+    if (!m_surface || !m_surface.lock())
         PROTO::backgroundEffect->destroyEffect(this);
 }
 
