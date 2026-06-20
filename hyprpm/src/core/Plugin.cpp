@@ -1,4 +1,5 @@
 #include "Plugin.hpp"
+#include <filesystem>
 
 SPluginRepoIdentifier SPluginRepoIdentifier::fromUrl(const std::string& url) {
     return SPluginRepoIdentifier{.type = IDENTIFIER_URL, .url = url};
@@ -13,6 +14,12 @@ SPluginRepoIdentifier SPluginRepoIdentifier::fromAuthorName(const std::string& a
 }
 
 SPluginRepoIdentifier SPluginRepoIdentifier::fromString(const std::string& string) {
+    // Detect local filesystem paths
+    if (!string.empty() && (string.starts_with('/') || string.starts_with("./") || string.starts_with("~/") ||
+                            std::filesystem::exists(string))) {
+        return SPluginRepoIdentifier{.type = IDENTIFIER_URL, .url = string};
+    }
+
     if (string.find(':') != std::string::npos) {
         return SPluginRepoIdentifier{.type = IDENTIFIER_URL, .url = string};
     } else {

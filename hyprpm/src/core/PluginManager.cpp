@@ -59,6 +59,11 @@ static bool isValidHash(std::string_view sv) {
     return std::ranges::all_of(sv, [](const char& c) { return std::isdigit(c) || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'); });
 }
 
+static bool isLocalPath(const std::string& path) {
+    return !path.empty() && (path.starts_with('/') || path.starts_with("./") || path.starts_with("~/") ||
+                             std::filesystem::exists(path));
+}
+
 CPluginManager::CPluginManager() {
     if (NSys::isSuperuser())
         Debug::die("Don't run hyprpm as a superuser.");
@@ -185,6 +190,24 @@ bool CPluginManager::addNewPluginRepo(const std::string& url, const std::string&
         return false;
     }
 
+    const bool bLocal = isLocalPath(url);
+
+    if (bLocal) {
+        // validate local path: must be a git repo
+        if (!std::filesystem::exists(url)) {
+            std::println(stderr, "\n{}", failureString("Local path does not exist: {}", url));
+            return false;
+        }
+        if (!std::filesystem::is_directory(url)) {
+            std::println(stderr, "\n{}", failureString("Local path is not a directory: {}", url));
+            return false;
+        }
+        if (!std::filesystem::exists(url + "/.git")) {
+            std::println(stderr, "\n{}", failureString("Local path is not a git repository: {}", url));
+            return false;
+        }
+    }
+
     CProgressBar progress;
     progress.m_iMaxSteps        = 5;
     progress.m_iSteps           = 0;
@@ -209,9 +232,12 @@ bool CPluginManager::addNewPluginRepo(const std::string& url, const std::string&
         return false;
     }
 
-    progress.printMessageAbove(infoString("Cloning {}", url));
+    std::string ret;
 
-    std::string ret = execAndGet(std::format("cd {} && git clone --recursive '{}' {}", getTempRoot(), url, USERNAME));
+    progress.printMessageAbove(infoString("{} {}", bLocal ? "Cloning from" : "Cloning", url));
+
+    // git clone works for both remote URLs and local paths
+    ret = execAndGet(std::format("cd {} && git clone --recursive '{}' {}", getTempRoot(), url, USERNAME));
 
     if (!std::filesystem::exists(m_szWorkingPluginDirectory + "/.git")) {
         std::println(stderr, "\n{}", failureString("Could not clone the plugin repository. shell returned:\n{}", ret));
@@ -219,14 +245,14 @@ bool CPluginManager::addNewPluginRepo(const std::string& url, const std::string&
     }
 
     if (!rev.empty()) {
-        std::string ret = execAndGet("git -C " + m_szWorkingPluginDirectory + " reset --hard --recurse-submodules " + rev);
-        if (ret.compare(0, 6, "fatal:") == 0) {
-            std::println(stderr, "\n{}", failureString("Could not check out revision {}. shell returned:\n{}", rev, ret));
+        std::string ret2 = execAndGet("git -C " + m_szWorkingPluginDirectory + " reset --hard --recurse-submodules " + rev);
+        if (ret2.compare(0, 6, "fatal:") == 0) {
+            std::println(stderr, "\n{}", failureString("Could not check out revision {}. shell returned:\n{}", rev, ret2));
             return false;
         }
-        ret = execAndGet("git -C " + m_szWorkingPluginDirectory + " submodule update --init");
+        ret2 = execAndGet("git -C " + m_szWorkingPluginDirectory + " submodule update --init");
         if (m_bVerbose)
-            std::println("{}", verboseString("git submodule update --init returned: {}", ret));
+            std::println("{}", verboseString("git submodule update --init returned: {}", ret2));
     }
 
     progress.m_iSteps = 1;
@@ -362,13 +388,22 @@ bool CPluginManager::addNewPluginRepo(const std::string& url, const std::string&
     std::string       repohash = execAndGet("cd " + m_szWorkingPluginDirectory + " && git rev-parse HEAD");
     if (repohash.length() > 0)
         repohash.pop_back();
-    auto lastSlash       = url.find_last_of('/');
-    auto secondLastSlash = url.find_last_of('/', lastSlash - 1);
-    repo.name            = pManifest->m_repository.name.empty() ? url.substr(lastSlash + 1) : pManifest->m_repository.name;
-    repo.author          = url.substr(secondLastSlash + 1, lastSlash - secondLastSlash - 1);
-    repo.url             = url;
-    repo.rev             = rev;
-    repo.hash            = repohash;
+    repo.hash = repohash;
+
+    if (bLocal) {
+        repo.name   = pManifest->m_repository.name.empty() ? std::filesystem::path(url).filename().string() : pManifest->m_repository.name;
+        repo.author = "local";
+        repo.url    = url;
+        repo.rev    = rev;
+        repo.local  = true;
+    } else {
+        auto lastSlash       = url.find_last_of('/');
+        auto secondLastSlash = url.find_last_of('/', lastSlash - 1);
+        repo.name            = pManifest->m_repository.name.empty() ? url.substr(lastSlash + 1) : pManifest->m_repository.name;
+        repo.author          = url.substr(secondLastSlash + 1, lastSlash - secondLastSlash - 1);
+        repo.url             = url;
+        repo.rev             = rev;
+    }
     for (auto const& p : pManifest->m_plugins) {
         repo.plugins.push_back(SPlugin{p.name, m_szWorkingPluginDirectory + "/" + p.output, false, p.failed});
     }
@@ -413,12 +448,77 @@ bool CPluginManager::removePluginRepo(const SPluginRepoIdentifier identifier) {
 eHeadersErrors CPluginManager::headersValid() {
     const auto HLVER = getHyprlandVersion(false);
 
-    if (!std::filesystem::exists(DataState::getHeadersPath() + "/share/pkgconfig/hyprland.pc"))
-        return HEADERS_MISSING;
+    // First check hyprpm-managed headers
+    if (std::filesystem::exists(DataState::getHeadersPath() + "/share/pkgconfig/hyprland.pc")) {
+        // find headers commit
+        const std::string& cmd     = std::format("PKG_CONFIG_PATH=\"{}\" pkgconf --cflags --keep-system-cflags hyprland", getPkgConfigPath());
+        auto               headers = execAndGet(cmd);
 
-    // find headers commit
-    const std::string& cmd     = std::format("PKG_CONFIG_PATH=\"{}\" pkgconf --cflags --keep-system-cflags hyprland", getPkgConfigPath());
-    auto               headers = execAndGet(cmd);
+        if (!headers.contains("-I/"))
+            return HEADERS_MISSING;
+
+        headers.pop_back(); // pop newline
+
+        std::string verHeader;
+
+        while (!headers.empty()) {
+            const auto PATH = headers.substr(0, headers.find(" -I/", 3));
+
+            if (headers.find(" -I/", 3) != std::string::npos)
+                headers = headers.substr(headers.find("-I/", 3));
+            else
+                headers = "";
+
+            if (PATH.ends_with("protocols"))
+                continue;
+
+            verHeader = trim(PATH.substr(2)) + "/hyprland/src/version.h";
+            break;
+        }
+
+        if (verHeader.empty())
+            return HEADERS_CORRUPTED;
+
+        // read header
+        std::ifstream ifs(verHeader);
+        if (!ifs.good())
+            return HEADERS_CORRUPTED;
+
+        std::string verHeaderContent((std::istreambuf_iterator<char>(ifs)), (std::istreambuf_iterator<char>()));
+        ifs.close();
+
+        const auto HASHPOS = verHeaderContent.find("#define GIT_COMMIT_HASH");
+
+        if (HASHPOS == std::string::npos || HASHPOS + 23 >= verHeaderContent.length())
+            return HEADERS_CORRUPTED;
+
+        std::string hash = verHeaderContent.substr(HASHPOS + 23);
+        hash             = hash.substr(0, hash.find_first_of('\n'));
+        hash             = hash.substr(hash.find_first_of('"') + 1);
+        hash             = hash.substr(0, hash.find_first_of('"'));
+
+        if (hash != HLVER.hash)
+            return HEADERS_MISMATCHED;
+
+        // check ABI hash too
+        const auto GLOBALSTATE = DataState::getGlobalState();
+
+        if (GLOBALSTATE.headersAbiCompiled != HLVER.abiHash)
+            return HEADERS_ABI_MISMATCH;
+
+        return HEADERS_OK;
+    }
+
+    // Fall back to system-installed headers
+    return systemHeadersValid();
+}
+
+eHeadersErrors CPluginManager::systemHeadersValid() {
+    const auto HLVER = getHyprlandVersion(false);
+
+    // Run pkgconf without hyprpm-specific path to check system-installed headers
+    const std::string cmd     = "pkgconf --cflags --keep-system-cflags hyprland";
+    auto              headers = execAndGet(cmd);
 
     if (!headers.contains("-I/"))
         return HEADERS_MISSING;
@@ -466,12 +566,6 @@ eHeadersErrors CPluginManager::headersValid() {
     if (hash != HLVER.hash)
         return HEADERS_MISMATCHED;
 
-    // check ABI hash too
-    const auto GLOBALSTATE = DataState::getGlobalState();
-
-    if (GLOBALSTATE.headersAbiCompiled != HLVER.abiHash)
-        return HEADERS_ABI_MISMATCH;
-
     return HEADERS_OK;
 }
 
@@ -490,9 +584,33 @@ bool CPluginManager::updateHeaders(bool force) {
         std::filesystem::permissions(getTempRoot(), std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
     }
 
-    if (!force && headersValid() == HEADERS_OK) {
-        std::println("\n{}", successString("Headers up to date."));
-        return true;
+    if (!force) {
+        const auto VALID = headersValid();
+        if (VALID == HEADERS_OK) {
+            if (!std::filesystem::exists(DataState::getHeadersPath() + "/share/pkgconfig/hyprland.pc")) {
+                std::println("\n{}", successString("System Hyprland headers found, skipping update."));
+                // update the ABI compiled hash so subsequent operations pass ABI checks
+                auto GLOBALSTATE               = DataState::getGlobalState();
+                GLOBALSTATE.headersAbiCompiled = HLVER.abiHash;
+                DataState::updateGlobalState(GLOBALSTATE);
+            } else {
+                std::println("\n{}", successString("Headers up to date."));
+            }
+            return true;
+        }
+    } else {
+        // even with --force, skip header update if system headers are available and
+        // hyprpm-managed headers don't exist. Use --force-headers to override.
+        if (!m_bForceHeaders && systemHeadersValid() == HEADERS_OK &&
+            !std::filesystem::exists(DataState::getHeadersPath() + "/share/pkgconfig/hyprland.pc")) {
+            std::println("\n{}", successString("System Hyprland headers found, skipping update."));
+            std::println("{}", infoString("Use --force-headers to force a header rebuild if needed."));
+
+            auto GLOBALSTATE               = DataState::getGlobalState();
+            GLOBALSTATE.headersAbiCompiled = HLVER.abiHash;
+            DataState::updateGlobalState(GLOBALSTATE);
+            return true;
+        }
     }
 
     CProgressBar progress;
@@ -687,9 +805,29 @@ bool CPluginManager::updatePlugins(bool forceUpdateAll) {
 
         createSafeDirectory(m_szWorkingPluginDirectory);
 
-        progress.printMessageAbove(infoString("Cloning {}", repo.url));
+        std::string ret;
 
-        std::string ret = execAndGet(std::format("cd {} && git clone --recursive '{}' {}", getTempRoot(), repo.url, USERNAME));
+        // check if source has changed
+        if (!update && repo.local) {
+            // local repo: check HEAD at source path before cloning
+            std::string hash = execAndGet("git -C '" + repo.url + "' rev-parse HEAD");
+            if (!hash.empty())
+                hash.pop_back();
+            update = update || hash != repo.hash;
+        }
+
+        if (!update) {
+            std::filesystem::remove_all(m_szWorkingPluginDirectory);
+            progress.printMessageAbove(successString("repository {} is up-to-date.", repo.name));
+            progress.m_iSteps++;
+            progress.print();
+            continue;
+        }
+
+        // git clone works for both remote URLs and local paths
+        progress.printMessageAbove(infoString("{} {}", repo.local ? "Cloning from" : "Cloning", repo.url));
+
+        ret = execAndGet(std::format("cd {} && git clone --recursive '{}' {}", getTempRoot(), repo.url, USERNAME));
 
         if (!std::filesystem::exists(m_szWorkingPluginDirectory + "/.git")) {
             std::println("{}", failureString("could not clone repo: shell returned: {}", ret));
@@ -699,16 +837,16 @@ bool CPluginManager::updatePlugins(bool forceUpdateAll) {
         if (!repo.rev.empty()) {
             progress.printMessageAbove(infoString("Plugin has revision set, resetting: {}", repo.rev));
 
-            std::string ret = execAndGet("git -C " + m_szWorkingPluginDirectory + " reset --hard --recurse-submodules \'" + repo.rev + "\'");
-            if (ret.compare(0, 6, "fatal:") == 0) {
-                std::println(stderr, "\n{}", failureString("could not check out revision {}: shell returned:\n{}", repo.rev, ret));
+            std::string ret2 = execAndGet("git -C " + m_szWorkingPluginDirectory + " reset --hard --recurse-submodules \'" + repo.rev + "\'");
+            if (ret2.compare(0, 6, "fatal:") == 0) {
+                std::println(stderr, "\n{}", failureString("could not check out revision {}: shell returned:\n{}", repo.rev, ret2));
 
                 return false;
             }
         }
 
-        if (!update) {
-            // check if git has updates
+        if (!update && !repo.local) {
+            // check if cloned git repo has updates
             std::string hash = execAndGet("cd " + m_szWorkingPluginDirectory + " && git rev-parse HEAD");
             if (!hash.empty())
                 hash.pop_back();
@@ -815,12 +953,18 @@ bool CPluginManager::updatePlugins(bool forceUpdateAll) {
         // add repo toml to DataState
         SPluginRepository newrepo = repo;
         newrepo.plugins.clear();
-        execAndGet("cd " + m_szWorkingPluginDirectory +
-                   " && git pull --recurse-submodules && git reset --hard --recurse-submodules"); // repo hash in the state.toml has to match head and not any pin
-        std::string repohash = execAndGet("cd " + m_szWorkingPluginDirectory + " && git rev-parse HEAD");
-        if (repohash.length() > 0)
-            repohash.pop_back();
-        newrepo.hash = repohash;
+        if (!repo.local) {
+            execAndGet("cd " + m_szWorkingPluginDirectory +
+                       " && git pull --recurse-submodules && git reset --hard --recurse-submodules"); // repo hash in the state.toml has to match head and not any pin
+        }
+        // for local repos, the hash was already computed from the source before cloning;
+        // for remote repos, get the HEAD hash after pull
+        {
+            std::string repohash = execAndGet("cd " + m_szWorkingPluginDirectory + " && git rev-parse HEAD");
+            if (repohash.length() > 0)
+                repohash.pop_back();
+            newrepo.hash = repohash;
+        }
         for (auto const& p : pManifest->m_plugins) {
             const auto OLDPLUGINIT = std::ranges::find_if(repo.plugins, [&](const auto& other) { return other.name == p.name; });
             newrepo.plugins.emplace_back(SPlugin{p.name, m_szWorkingPluginDirectory + "/" + p.output, OLDPLUGINIT != repo.plugins.end() ? OLDPLUGINIT->enabled : false});

@@ -31,6 +31,8 @@ constexpr std::string_view HELP = R"#(┏ hyprpm, a Hyprland Plugin Manager
 ┣ --help         | -h           → Show this menu.
 ┣ --verbose      | -v           → Enable too much logging.
 ┣ --force        | -f           → Force an operation ignoring checks (e.g. update -f).
+┣ --force-headers               → Force downloading and rebuilding Hyprland headers even
+┃                                 when system headers are found.
 ┣ --no-shallow   | -s           → Disable shallow cloning of Hyprland sources.
 ┣ --hl-url       |              → Pass a custom hyprland source url.
 ┗
@@ -48,7 +50,7 @@ int                        main(int argc, char** argv, char** envp) {
     }
 
     std::vector<std::string> command;
-    bool                     notify = false, verbose = false, force = false, noShallow = false, noNix = false;
+    bool                     notify = false, verbose = false, force = false, forceHeaders = false, noShallow = false, noNix = false;
     std::string              customHlUrl;
 
     for (int i = 1; i < argc; ++i) {
@@ -78,6 +80,8 @@ int                        main(int argc, char** argv, char** envp) {
             } else if (ARGS[i] == "--force" || ARGS[i] == "-f") {
                 force = true;
                 std::println("{}", statusString("!", Colors::RED, "Using --force, I hope you know what you are doing."));
+            } else if (ARGS[i] == "--force-headers") {
+                forceHeaders = true;
             } else {
                 std::println(stderr, "Unrecognized option {}", ARGS[i]);
                 return 1;
@@ -95,8 +99,9 @@ int                        main(int argc, char** argv, char** envp) {
     g_pPluginManager->m_bVerbose      = verbose;
     g_pPluginManager->m_bNoShallow    = noShallow;
     g_pPluginManager->m_bNoNix        = noNix;
-    g_pPluginManager->m_szCustomHlUrl = customHlUrl;
-    g_pPluginManager->m_szArgv0       = argv[0];
+    g_pPluginManager->m_szCustomHlUrl  = customHlUrl;
+    g_pPluginManager->m_bForceHeaders  = forceHeaders;
+    g_pPluginManager->m_szArgv0        = argv[0];
 
     if (command[0] == "add") {
         if (command.size() < 2) {

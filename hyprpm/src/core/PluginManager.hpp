@@ -52,6 +52,7 @@ class CPluginManager {
     bool                   removePluginRepo(const SPluginRepoIdentifier identifier);
 
     eHeadersErrors         headersValid();
+    eHeadersErrors         systemHeadersValid();
     bool                   updateHeaders(bool force = false);
     bool                   updatePlugins(bool forceUpdateAll);
 
@@ -71,9 +72,10 @@ class CPluginManager {
 
     bool                   hasDeps();
 
-    bool                   m_bVerbose   = false;
-    bool                   m_bNoShallow = false;
-    bool                   m_bNoNix     = false;
+    bool                   m_bVerbose     = false;
+    bool                   m_bNoShallow   = false;
+    bool                   m_bNoNix       = false;
+    bool                   m_bForceHeaders = false;
     std::string            m_szCustomHlUrl, m_szUsername, m_szArgv0;
 
     // will delete recursively if exists!!
