@@ -63,7 +63,10 @@ bool CWLRegionResource::good() {
 }
 
 SP<CWLRegionResource> CWLRegionResource::fromResource(wl_resource* res) {
-    auto data = sc<CWLRegionResource*>(sc<CWlRegion*>(wl_resource_get_user_data(res))->data());
+    auto region = sc<CWlRegion*>(wl_resource_get_user_data(res));
+    if (!region)
+        return nullptr;
+    auto data = sc<CWLRegionResource*>(region->data());
     return data ? data->m_self.lock() : nullptr;
 }
 
