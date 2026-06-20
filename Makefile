@@ -4,16 +4,16 @@ stub:
 	@echo "Do not run $(MAKE) directly without any arguments. Please refer to the wiki on how to compile Hyprland."
 
 release:
-	cmake --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Release -DCMAKE_INSTALL_PREFIX:STRING=${PREFIX} -S . -B ./build
-	cmake --build ./build --config Release --target all -j`nproc 2>/dev/null || getconf NPROCESSORS_CONF`
+	cmake -G Ninja --no-warn-unused-cli -DCMAKE_SKIP_RPATH=ON -DCMAKE_SKIP_RPATH=ON -DCMAKE_SKIP_RPATH=ON -DCMAKE_SKIP_RPATH=ON -DCMAKE_SKIP_RPATH=ON -DCMAKE_SKIP_RPATH=ON -DCMAKE_SKIP_RPATH=ON -DCMAKE_SKIP_RPATH=ON -DCMAKE_SKIP_RPATH=ON -DCMAKE_SKIP_RPATH=ON -DCMAKE_SKIP_RPATH=ON -DCMAKE_SKIP_RPATH=ON -DCMAKE_SKIP_RPATH=ON -DCMAKE_SKIP_RPATH=ON -DCMAKE_SKIP_RPATH=ON -DCMAKE_BUILD_TYPE:STRING=Release -DCMAKE_INSTALL_PREFIX:STRING=${PREFIX} -S . -B ./build
+	cmake --build ./build --config Release --target all -j`nproc --ignore=2 2>/dev/null || getconf NPROCESSORS_CONF`
 
 debug:
-	cmake --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DTESTS=true -DCMAKE_INSTALL_PREFIX:STRING=${PREFIX} -S . -B ./build
-	cmake --build ./build --config Debug --target all -j`nproc 2>/dev/null || getconf NPROCESSORS_CONF`
+	cmake -G Ninja --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DTESTS=true -DCMAKE_INSTALL_PREFIX:STRING=${PREFIX} -S . -B ./debug
+	cmake --build ./debug --config Debug --target all -j`nproc --ignore=2 2>/dev/null || getconf NPROCESSORS_CONF`
 
 nopch:
-	cmake --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Release -DCMAKE_INSTALL_PREFIX:STRING=${PREFIX} -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON -S . -B ./build
-	cmake --build ./build --config Release --target all -j`nproc 2>/dev/null || getconf NPROCESSORS_CONF`
+	cmake -G Ninja --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Release -DCMAKE_INSTALL_PREFIX:STRING=${PREFIX} -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON -S . -B ./build
+	cmake --build ./build --config Release --target all -j`nproc --ignore=2 2>/dev/null || getconf NPROCESSORS_CONF`
 
 clear:
 	rm -rf build
