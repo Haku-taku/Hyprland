@@ -155,6 +155,11 @@ namespace Layout::Tiled {
             std::optional<float> restoreColumnWidth;
         };
 
+        // stores the column width ratio of the most recently removed tiled target,
+        // so drag-and-drop can restore the original column width
+        WP<ITarget>          m_lastRemovedTarget;
+        std::optional<float> m_lastRemovedColumnWidth;
+
         void                                syncFullscreenTargets();
         SFullscreenScrollState*             fullscreenStateForTarget(SP<ITarget> target, eFullscreenMode targetFullscreenMode);
         SFullscreenScrollState*             fullscreenStateForData(SP<SScrollingTargetData> target, eFullscreenMode targetFullscreenMode);

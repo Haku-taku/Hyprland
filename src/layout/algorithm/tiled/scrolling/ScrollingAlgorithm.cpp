@@ -694,19 +694,51 @@ void CScrollingAlgorithm::newTarget(SP<ITarget> target) {
     SP<SColumnData>          droppingColumn = droppingData ? droppingData->column.lock() : nullptr;
     const auto               width          = target->window()->m_ruleApplicator->static_.scrollingWidth;
 
+    // helper to determine column width: prefer the stored original column width
+    // (from removeTarget during drag-start) if it matches this target
+    const auto getColWidth = [&]() -> float {
+        if (m_lastRemovedTarget.lock() == target && m_lastRemovedColumnWidth.has_value())
+            return *m_lastRemovedColumnWidth;
+        return width.value_or(defaultColumnWidth());
+    };
+
     if (!droppingColumn) {
-        auto col = m_scrollingData->add(width);
+        auto col = m_scrollingData->add(getColWidth() > 0 ? std::optional<float>(getColWidth()) : width);
         col->add(target);
         m_scrollingData->fitCol(col);
     } else {
         if (g_layoutManager->dragController()->wasDraggingWindow() && g_layoutManager->dragController()->draggingTiled()) {
             if (droppingOn) {
-                const auto IDX = droppingColumn->idx(droppingOn->layoutTarget());
-                const auto TOP = droppingOn->getWindowIdealBoundingBoxIgnoreReserved().middle().y > g_pInputManager->getMouseCoordsInternal().y;
-                droppingColumn->add(target, TOP ? (IDX == 0 ? -1 : IDX - 1) : (IDX));
-            } else
+                const auto  MOUSECOORDS = g_pInputManager->getMouseCoordsInternal();
+                const auto  TARGETBOX   = droppingOn->getWindowIdealBoundingBoxIgnoreReserved();
+                const auto  CENTER      = TARGETBOX.middle();
+
+                // calculate normalized horizontal and vertical offsets from the center of the target window
+                const auto  DELTA_X = TARGETBOX.w > 0 ? std::abs(MOUSECOORDS.x - CENTER.x) / (TARGETBOX.w * 0.5) : 0.0;
+                const auto  DELTA_Y = TARGETBOX.h > 0 ? std::abs(MOUSECOORDS.y - CENTER.y) / (TARGETBOX.h * 0.5) : 0.0;
+
+                if (DELTA_X > DELTA_Y) {
+                    // horizontal bias is stronger → insert into a new column to the left or right
+                    // add(after, ...) inserts *after* the given index:
+                    //   RIGHT of col → after col (COL_IDX), LEFT of col → after col-1 (COL_IDX - 1)
+                    const auto COL_IDX = m_scrollingData->idx(droppingColumn);
+                    const auto RIGHT   = MOUSECOORDS.x > CENTER.x;
+                    const auto NEW_IDX = RIGHT ? COL_IDX : COL_IDX - 1;
+                    const auto COL_W   = getColWidth();
+                    auto       newCol  = m_scrollingData->add(NEW_IDX, COL_W > 0 ? std::optional<float>(COL_W) : width);
+                    newCol->add(target);
+                    m_scrollingData->fitCol(newCol);
+                } else {
+                    // vertical bias is stronger → keep existing behavior (insert above/below within same column)
+                    const auto IDX = droppingColumn->idx(droppingOn->layoutTarget());
+                    const auto TOP = CENTER.y > MOUSECOORDS.y;
+                    droppingColumn->add(target, TOP ? (IDX == 0 ? -1 : IDX - 1) : (IDX));
+                    m_scrollingData->fitCol(droppingColumn);
+                }
+            } else {
                 droppingColumn->add(target);
-            m_scrollingData->fitCol(droppingColumn);
+                m_scrollingData->fitCol(droppingColumn);
+            }
         } else {
             auto idx = m_scrollingData->idx(droppingColumn);
             auto col = idx == -1 ? m_scrollingData->add(width) : m_scrollingData->add(idx, width);
@@ -715,6 +747,8 @@ void CScrollingAlgorithm::newTarget(SP<ITarget> target) {
         }
     }
 
+    m_lastRemovedTarget.reset();
+    m_lastRemovedColumnWidth.reset();
     m_scrollingData->recalculate();
 }
 
@@ -727,6 +761,13 @@ void CScrollingAlgorithm::removeTarget(SP<ITarget> target) {
 
     if (!DATA)
         return;
+
+    // store the column width ratio before removal, so drag-and-drop
+    // can preserve the original column width when inserting into a new column
+    if (auto col = DATA->column.lock(); col) {
+        m_lastRemovedTarget      = target;
+        m_lastRemovedColumnWidth = col->getColumnWidth();
+    }
 
     clearFullscreenTarget((target->fullscreenMode() == FSMODE_MAXIMIZED ? m_maximizeTargets : m_fullscreenTargets), target);
 
