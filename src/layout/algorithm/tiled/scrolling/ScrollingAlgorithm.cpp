@@ -16,6 +16,7 @@
 #include "../../../../managers/animation/DesktopAnimationManager.hpp"
 #include "../../../../event/EventBus.hpp"
 
+#include <cstdlib>
 #include <hyprutils/string/VarList2.hpp>
 #include <hyprutils/string/VarList.hpp>
 #include <hyprutils/string/ConstVarList.hpp>
@@ -685,17 +686,16 @@ void CScrollingAlgorithm::focusOnInput(SP<ITarget> target, eInputMode input) {
 }
 
 void CScrollingAlgorithm::newTarget(SP<ITarget> target) {
-    auto droppingOn = Desktop::focusState()->window();
+    const auto MOUSECOORDS = g_pInputManager->getMouseCoordsInternal();
+    auto       droppingOn  = Desktop::focusState()->window();
 
     if (droppingOn && droppingOn->layoutTarget() == target)
-        droppingOn = g_pCompositor->vectorToWindowUnified(g_pInputManager->getMouseCoordsInternal(), Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS);
+        droppingOn = g_pCompositor->vectorToWindowUnified(MOUSECOORDS, Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS, droppingOn->layoutTarget()->window());
 
     SP<SScrollingTargetData> droppingData   = droppingOn ? dataFor(droppingOn->layoutTarget()) : nullptr;
     SP<SColumnData>          droppingColumn = droppingData ? droppingData->column.lock() : nullptr;
     const auto               width          = target->window()->m_ruleApplicator->static_.scrollingWidth;
 
-    // helper to determine column width: prefer the stored original column width
-    // (from removeTarget during drag-start) if it matches this target
     const auto getColWidth = [&]() -> float {
         if (m_lastRemovedTarget.lock() == target && m_lastRemovedColumnWidth.has_value())
             return *m_lastRemovedColumnWidth;
@@ -703,13 +703,42 @@ void CScrollingAlgorithm::newTarget(SP<ITarget> target) {
     };
 
     if (!droppingColumn) {
-        auto col = m_scrollingData->add(getColWidth() > 0 ? std::optional<float>(getColWidth()) : width);
+        int64_t insertAfter = sc<int64_t>(m_scrollingData->columns.size()) - 1;
+
+        if (!m_scrollingData->columns.empty()) {
+            float   bestLeft = std::numeric_limits<float>::max();
+            int64_t bestIdx  = -1;
+
+            for (size_t i = 0; i < m_scrollingData->columns.size(); ++i) {
+                const auto& col = m_scrollingData->columns[i];
+                float colLeft  = std::numeric_limits<float>::max();
+                float colRight = std::numeric_limits<float>::lowest();
+                for (const auto& td : col->targetDatas) {
+                    if (const auto W = td->target.lock(); W && validMapped(W->window())) {
+                        const auto BOX = W->window()->getWindowIdealBoundingBoxIgnoreReserved();
+                        colLeft  = std::min(colLeft, sc<float>(BOX.x));
+                        colRight = std::max(colRight, sc<float>(BOX.x + BOX.width));
+                    }
+                }
+                if (colLeft > colRight)
+                    continue;
+
+                if (MOUSECOORDS.x < colLeft && colLeft < bestLeft) {
+                    bestLeft = colLeft;
+                    bestIdx  = sc<int64_t>(i);
+                }
+            }
+
+            if (bestIdx >= 0)
+                insertAfter = bestIdx - 1;
+        }
+
+        auto col = m_scrollingData->add(insertAfter, getColWidth() > 0 ? std::optional<float>(getColWidth()) : width);
         col->add(target);
         m_scrollingData->fitCol(col);
     } else {
         if (g_layoutManager->dragController()->wasDraggingWindow() && g_layoutManager->dragController()->draggingTiled()) {
             if (droppingOn) {
-                const auto  MOUSECOORDS = g_pInputManager->getMouseCoordsInternal();
                 const auto  TARGETBOX   = droppingOn->getWindowIdealBoundingBoxIgnoreReserved();
                 const auto  CENTER      = TARGETBOX.middle();
 
