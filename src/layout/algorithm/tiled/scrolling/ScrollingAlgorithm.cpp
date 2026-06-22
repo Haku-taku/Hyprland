@@ -1326,8 +1326,10 @@ void CScrollingAlgorithm::clearFullscreenTarget(std::vector<SFullscreenScrollSta
 
         clear(TARGET);
 
-        if (const auto COL = TDATA ? TDATA->column.lock() : nullptr; COL && it->restoreColumnWidth)
+        if (const auto COL = TDATA ? TDATA->column.lock() : nullptr; COL && it->restoreColumnWidth) {
             COL->setColumnWidth(*it->restoreColumnWidth);
+            m_scrollingData->centerOrFitCol(COL);
+        }
 
         it = fullscreenTargetList.erase(it);
     }
