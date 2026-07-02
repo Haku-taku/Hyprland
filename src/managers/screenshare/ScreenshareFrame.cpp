@@ -1,5 +1,5 @@
 #include "ScreenshareManager.hpp"
-#include "../PointerManager.hpp"
+#include "../../pointer/PointerManager.hpp"
 #include "../input/InputManager.hpp"
 #include "../permissions/DynamicPermissionManager.hpp"
 #include "../../protocols/ColorManagement.hpp"
@@ -236,7 +236,7 @@ void CScreenshareFrame::renderMonitor() {
         };
     };
 
-    for (auto const& l : g_pCompositor->m_layers) {
+    for (auto const& l : Desktop::layerState()->layers()) {
         if (!l->m_ruleApplicator->noScreenShare().valueOrDefault())
             continue;
 
@@ -259,7 +259,7 @@ void CScreenshareFrame::renderMonitor() {
             l->m_popupHead->breadthfirst(hidePopups(popupBaseOffset), nullptr);
     }
 
-    for (auto const& w : g_pCompositor->m_windows) {
+    for (auto const& w : Desktop::windowState()->windows()) {
         if (!w->m_ruleApplicator->noScreenShare().valueOrDefault())
             continue;
 
@@ -271,7 +271,7 @@ void CScreenshareFrame::renderMonitor() {
 
         const auto PWORKSPACE = w->m_workspace;
 
-        if UNLIKELY (!PWORKSPACE && !w->m_fadingOut && w->alphaValue(WINDOW_ALPHA_FADE) * w->alphaValue(WINDOW_ALPHA_FULLSCREEN) != 0.f)
+        if UNLIKELY (!PWORKSPACE && w->alphaValue(WINDOW_ALPHA_FADE) * w->alphaValue(WINDOW_ALPHA_FULLSCREEN) != 0.f)
             continue;
 
         const auto renderOffset     = PWORKSPACE && !w->m_pinned ? PWORKSPACE->m_renderOffset->value() : Vector2D{};
@@ -307,7 +307,7 @@ void CScreenshareFrame::renderMonitor() {
     if (m_overlayCursor) {
         CRegion  fakeDamage = {0, 0, INT16_MAX, INT16_MAX};
         Vector2D cursorPos  = g_pInputManager->getMouseCoordsInternal() - PMONITOR->m_position - m_session->m_captureBox.pos() / PMONITOR->m_scale;
-        g_pPointerManager->renderSoftwareCursorsFor(PMONITOR, Time::steadyNow(), fakeDamage, cursorPos, true);
+        Pointer::mgr()->renderSoftwareCursorsFor(PMONITOR, Time::steadyNow(), fakeDamage, cursorPos, true);
     }
 }
 
@@ -350,7 +350,7 @@ void CScreenshareFrame::renderWindow() {
         return;
 
     CRegion fakeDamage = {0, 0, INT16_MAX, INT16_MAX};
-    g_pPointerManager->renderSoftwareCursorsFor(PMONITOR->m_self.lock(), NOW, fakeDamage, g_pInputManager->getMouseCoordsInternal() - PWINDOW->m_realPosition->value(), true);
+    Pointer::mgr()->renderSoftwareCursorsFor(PMONITOR->m_self.lock(), NOW, fakeDamage, g_pInputManager->getMouseCoordsInternal() - PWINDOW->m_realPosition->value(), true);
 }
 
 void CScreenshareFrame::render() {

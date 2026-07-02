@@ -166,7 +166,7 @@ SWorkspaceIDName getWorkspaceIDNameFromString(const std::string& in) {
         WORKSPACEID id = next ? Desktop::focusState()->monitor()->activeWorkspaceID() : 0;
         while (++id < LONG_MAX) {
             const auto PWORKSPACE = State::workspaceState()->query().id(id).run();
-            if (!invalidWSes.contains(id) && (!PWORKSPACE || PWORKSPACE->getWindows() == 0)) {
+            if (!invalidWSes.contains(id) && (!PWORKSPACE || PWORKSPACE->getWindowCount() == 0)) {
                 result.id = id;
                 return result;
             }
@@ -486,7 +486,7 @@ std::optional<std::string> cleanCmdForWorkspace(const std::string& inWorkspaceNa
 
             bool hadWorkspaceRule = false;
             rulesList.map([&](std::string& rule) {
-                if (rule.find("workspace") == 0) {
+                if (rule.starts_with("workspace")) {
                     rule             = workspaceRule;
                     hadWorkspaceRule = true;
                 }
@@ -597,6 +597,8 @@ std::vector<SCallstackFrameInfo> getBacktrace() {
 
     btSize    = backtrace(bt, 1024);
     btSymbols = backtrace_symbols(bt, btSize);
+
+    callstack.reserve(btSize);
 
     for (auto i = 0; i < btSize; ++i) {
         callstack.emplace_back(SCallstackFrameInfo{bt[i], std::string{btSymbols[i]}});

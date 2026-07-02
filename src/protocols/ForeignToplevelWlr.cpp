@@ -4,6 +4,7 @@
 #include "../Compositor.hpp"
 #include "../managers/input/InputManager.hpp"
 #include "../desktop/state/FocusState.hpp"
+#include "../desktop/state/GlobalWindowController.hpp"
 #include "../render/Renderer.hpp"
 #include "../managers/EventManager.hpp"
 #include "../event/EventBus.hpp"
@@ -45,13 +46,19 @@ CForeignToplevelHandleWlr::CForeignToplevelHandleWlr(SP<CZwlrForeignToplevelHand
         }
 
         if (output) {
-            const auto wpMonitor = CWLOutputResource::fromResource(output)->m_monitor;
+            const auto OUTPUT = CWLOutputResource::fromResource(output);
+            if UNLIKELY (!OUTPUT) {
+                LOGM(Log::ERR, "Client requested foreign toplevel output on an invalid output resource");
+                return;
+            }
+
+            const auto wpMonitor = OUTPUT->m_monitor;
 
             if (!wpMonitor.expired()) {
                 const auto monitor = wpMonitor.lock();
 
                 if (PWINDOW->m_workspace != monitor->m_activeWorkspace) {
-                    g_pCompositor->moveWindowToWorkspaceSafe(PWINDOW, monitor->m_activeWorkspace);
+                    Desktop::globalWindowController()->moveWindowToWorkspace(PWINDOW, monitor->m_activeWorkspace);
                     Desktop::focusState()->rawMonitorFocus(monitor);
                 }
             }
@@ -217,7 +224,7 @@ CForeignToplevelWlrManager::CForeignToplevelWlrManager(SP<CZwlrForeignToplevelMa
         PROTO::foreignToplevelWlr->onManagerResourceDestroy(this);
     });
 
-    for (auto const& w : g_pCompositor->m_windows) {
+    for (auto const& w : Desktop::windowState()->windows()) {
         if (!PROTO::foreignToplevelWlr->windowValidForForeign(w))
             continue;
 

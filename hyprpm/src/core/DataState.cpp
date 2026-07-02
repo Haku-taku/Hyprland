@@ -124,7 +124,7 @@ void DataState::addNewPluginRepo(const SPluginRepository& repo) {
         Debug::die("{}", failureString("Failed to write plugin state"));
 }
 
-bool DataState::pluginRepoExists(const SPluginRepoIdentifier identifier) {
+bool DataState::pluginRepoExists(const SPluginRepoIdentifier& identifier) {
     ensureStateStoreExists();
 
     for (const auto& stateFile : getPluginStates()) {
@@ -140,7 +140,7 @@ bool DataState::pluginRepoExists(const SPluginRepoIdentifier identifier) {
     return false;
 }
 
-void DataState::removePluginRepo(const SPluginRepoIdentifier identifier) {
+void DataState::removePluginRepo(const SPluginRepoIdentifier& identifier) {
     ensureStateStoreExists();
 
     for (const auto& stateFile : getPluginStates()) {
@@ -253,7 +253,7 @@ std::vector<SPluginRepository> DataState::getAllRepositories() {
     return repos;
 }
 
-bool DataState::setPluginEnabled(const SPluginRepoIdentifier identifier, bool enabled) {
+bool DataState::setPluginEnabled(const SPluginRepoIdentifier& identifier, bool enabled) {
     ensureStateStoreExists();
 
     for (const auto& stateFile : getPluginStates()) {

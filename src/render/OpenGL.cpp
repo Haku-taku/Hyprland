@@ -16,7 +16,7 @@
 #include "../helpers/TransferFunction.hpp"
 #include "../config/ConfigValue.hpp"
 #include "../config/legacy/ConfigManager.hpp"
-#include "../managers/PointerManager.hpp"
+#include "../pointer/PointerManager.hpp"
 #include "../desktop/view/LayerSurface.hpp"
 #include "../desktop/state/FocusState.hpp"
 #include "../protocols/LayerShell.hpp"
@@ -25,7 +25,7 @@
 #include "../helpers/cm/ColorManagement.hpp"
 #include "../managers/input/InputManager.hpp"
 #include "../managers/eventLoop/EventLoopManager.hpp"
-#include "../managers/CursorManager.hpp"
+#include "../pointer/cursor/CursorManager.hpp"
 #include "../helpers/fs/FsUtils.hpp"
 #include "../helpers/env/Env.hpp"
 #include "../helpers/MainLoopExecutor.hpp"
@@ -1260,7 +1260,7 @@ WP<CShader> CHyprOpenGLImpl::renderToOutputInternal() {
     shader->setUniformInt(SHADER_POINTER_KILLING, g_pInputManager->getClickMode() == CLICKMODE_KILL);
     shader->setUniformInt(SHADER_POINTER_SHAPE, g_pHyprRenderer->m_lastCursorData.shape);
     shader->setUniformInt(SHADER_POINTER_SHAPE_PREVIOUS, g_pHyprRenderer->m_lastCursorData.shapePrevious);
-    shader->setUniformFloat(SHADER_POINTER_SIZE, g_pCursorManager->getScaledSize());
+    shader->setUniformFloat(SHADER_POINTER_SIZE, Pointer::Cursor::mgr()->getScaledSize());
 
     if (*PDT == 0) {
         PHLMONITORREF pMonitor = m_renderData.pMonitor;
@@ -1983,7 +1983,7 @@ void CHyprOpenGLImpl::preRender(PHLMONITOR pMonitor) {
     };
 
     bool hasWindows = false;
-    for (auto const& w : g_pCompositor->m_windows) {
+    for (auto const& w : Desktop::windowState()->windows()) {
         if (w->m_workspace == pMonitor->m_activeWorkspace && w->visible() && w->m_isMapped && (!w->m_isFloating || *PBLURXRAY)) {
 
             // check if window is valid

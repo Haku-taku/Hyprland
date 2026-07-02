@@ -9,7 +9,7 @@
 #include "../protocols/core/DataDevice.hpp"
 #include "../errorOverlay/Overlay.hpp"
 #include "KeybindManager.hpp"
-#include "PointerManager.hpp"
+#include "../pointer/PointerManager.hpp"
 #include "Compositor.hpp"
 #include "eventLoop/EventLoopManager.hpp"
 #include "debug/log/Logger.hpp"
@@ -944,7 +944,8 @@ SDispatchResult CKeybindManager::changeMouseBindMode(const eMouseBindMode MODE) 
             return {};
 
         const auto      MOUSECOORDS = g_pInputManager->getMouseCoordsInternal();
-        const PHLWINDOW PWINDOW = g_pCompositor->vectorToWindowUnified(MOUSECOORDS, Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING);
+        const PHLWINDOW PWINDOW =
+            Desktop::viewState()->hitTest().windowAt(MOUSECOORDS, Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING);
 
         if (!PWINDOW)
             return SDispatchResult{.passEvent = true};

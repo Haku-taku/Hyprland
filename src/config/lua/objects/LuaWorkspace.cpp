@@ -51,7 +51,7 @@ static int workspaceGetWindows(lua_State* L) {
 
     lua_newtable(L);
     int idx = 1;
-    for (auto const& w : g_pCompositor->m_windows) {
+    for (auto const& w : Desktop::windowState()->windows()) {
         if (w->m_workspace == ws) {
             Objects::CLuaWindow::push(L, w);
             lua_rawseti(L, -2, idx++);
@@ -73,7 +73,7 @@ static int workspaceGetGroups(lua_State* L) {
 
     std::vector<Desktop::View::CGroup*> pushedGroups;
 
-    for (auto const& w : g_pCompositor->m_windows) {
+    for (auto const& w : Desktop::windowState()->windows()) {
         if (w->m_workspace != ws || !w->m_group)
             continue;
 
@@ -112,7 +112,7 @@ static int workspaceIndex(lua_State* L) {
         else
             lua_pushnil(L);
     } else if (key == "windows")
-        lua_pushinteger(L, sc<lua_Integer>(ws->getWindows()));
+        lua_pushinteger(L, sc<lua_Integer>(ws->getWindowCount()));
     else if (key == "visible")
         lua_pushboolean(L, ws->isVisible());
     else if (key == "special")
@@ -129,7 +129,7 @@ static int workspaceIndex(lua_State* L) {
     else if (key == "is_persistent")
         lua_pushboolean(L, ws->isPersistent());
     else if (key == "is_empty")
-        lua_pushboolean(L, ws->getWindows() == 0);
+        lua_pushboolean(L, ws->getWindowCount() == 0);
     else if (key == "config_name")
         lua_pushstring(L, ws->getConfigName().c_str());
     else if (key == "tiled_layout") {

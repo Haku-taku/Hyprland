@@ -12,7 +12,8 @@
 #include "../../../../render/Renderer.hpp"
 #include "../../../../state/MonitorState.hpp"
 #include "../../../../managers/input/InputManager.hpp"
-#include "../../../../managers/PointerManager.hpp"
+#include "../../../../pointer/PointerManager.hpp"
+#include "../../../../pointer/PointerController.hpp"
 #include "../../../../managers/animation/DesktopAnimationManager.hpp"
 #include "../../../../event/EventBus.hpp"
 
@@ -21,6 +22,7 @@
 #include <hyprutils/string/VarList.hpp>
 #include <hyprutils/string/ConstVarList.hpp>
 #include <hyprutils/utils/ScopeGuard.hpp>
+#include <optional>
 
 using namespace Hyprutils::String;
 using namespace Hyprutils::Utils;
@@ -670,7 +672,7 @@ void CScrollingAlgorithm::focusOnInput(SP<ITarget> target, eInputMode input) {
     }
 
     // if click, but target is not under cursor, ignore
-    if (input == INPUT_MODE_CLICK && !g_pPointerManager->getCursorBoxGlobal().overlaps(target->position()))
+    if (input == INPUT_MODE_CLICK && !Pointer::mgr()->getCursorBoxGlobal().overlaps(target->position()))
         return;
 
     // if we moved via non-kb, and it's fully visible, ignore
@@ -690,7 +692,7 @@ void CScrollingAlgorithm::newTarget(SP<ITarget> target) {
     auto       droppingOn  = Desktop::focusState()->window();
 
     if (droppingOn && droppingOn->layoutTarget() == target)
-        droppingOn = g_pCompositor->vectorToWindowUnified(MOUSECOORDS, Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS, droppingOn->layoutTarget()->window());
+        droppingOn = Desktop::viewState()->hitTest().windowAt(g_pInputManager->getMouseCoordsInternal(), Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS);
 
     SP<SScrollingTargetData> droppingData   = droppingOn ? dataFor(droppingOn->layoutTarget()) : nullptr;
     SP<SColumnData>          droppingColumn = droppingData ? droppingData->column.lock() : nullptr;
@@ -738,36 +740,44 @@ void CScrollingAlgorithm::newTarget(SP<ITarget> target) {
         m_scrollingData->fitCol(col);
     } else {
         if (g_layoutManager->dragController()->wasDraggingWindow() && g_layoutManager->dragController()->draggingTiled()) {
-            if (droppingOn) {
-                const auto  TARGETBOX   = droppingOn->getWindowIdealBoundingBoxIgnoreReserved();
-                const auto  CENTER      = TARGETBOX.middle();
+            // we are dropping a DnD on a different target.
+            // for scrolling, if we are close to the edge (30%, because I said so)
+            // make a new column, otherwise add.
 
-                // calculate normalized horizontal and vertical offsets from the center of the target window
-                const auto  DELTA_X = TARGETBOX.w > 0 ? std::abs(MOUSECOORDS.x - CENTER.x) / (TARGETBOX.w * 0.5) : 0.0;
-                const auto  DELTA_Y = TARGETBOX.h > 0 ? std::abs(MOUSECOORDS.y - CENTER.y) / (TARGETBOX.h * 0.5) : 0.0;
+            const auto     MOUSE_POS    = g_pInputManager->getMouseCoordsInternal();
+            const auto     DROPPING_BOX = *droppingOn->logicalBox();
 
-                if (DELTA_X > DELTA_Y) {
-                    // horizontal bias is stronger → insert into a new column to the left or right
-                    // add(after, ...) inserts *after* the given index:
-                    //   RIGHT of col → after col (COL_IDX), LEFT of col → after col-1 (COL_IDX - 1)
-                    const auto COL_IDX = m_scrollingData->idx(droppingColumn);
-                    const auto RIGHT   = MOUSECOORDS.x > CENTER.x;
-                    const auto NEW_IDX = RIGHT ? COL_IDX : COL_IDX - 1;
-                    const auto COL_W   = getColWidth();
-                    auto       newCol  = m_scrollingData->add(NEW_IDX, COL_W > 0 ? std::optional<float>(COL_W) : width);
-                    newCol->add(target);
-                    m_scrollingData->fitCol(newCol);
-                } else {
-                    // vertical bias is stronger → keep existing behavior (insert above/below within same column)
+            const auto     MOUSE_CMP_AXIS = m_scrollingData->controller->isPrimaryHorizontal() ? MOUSE_POS.x : MOUSE_POS.y;
+            const Vector2D DROPPING_RANGE =
+                m_scrollingData->controller->isPrimaryHorizontal() ? Vector2D{DROPPING_BOX.x, DROPPING_BOX.w} : Vector2D{DROPPING_BOX.y, DROPPING_BOX.h};
+
+            const float RANGE_THRESHOLD   = 0.3;
+            const bool  WITHIN_RANGE_LEFT = MOUSE_CMP_AXIS <= DROPPING_RANGE.x + (DROPPING_RANGE.y * RANGE_THRESHOLD);
+            const bool  WITHIN_RANGE      = WITHIN_RANGE_LEFT || MOUSE_CMP_AXIS >= DROPPING_RANGE.x + (DROPPING_RANGE.y * (1.F - RANGE_THRESHOLD));
+
+            if (!WITHIN_RANGE) {
+                // we are not within edge range, so we drop into the column
+
+                if (droppingOn) {
                     const auto IDX = droppingColumn->idx(droppingOn->layoutTarget());
-                    const auto TOP = CENTER.y > MOUSECOORDS.y;
+                    const auto TOP = droppingOn->getWindowIdealBoundingBoxIgnoreReserved().middle().y > g_pInputManager->getMouseCoordsInternal().y;
                     droppingColumn->add(target, TOP ? (IDX == 0 ? -1 : IDX - 1) : (IDX));
-                    m_scrollingData->fitCol(droppingColumn);
-                }
+                } else
+                    droppingColumn->add(target);
             } else {
+                // we are within the edge drop, make a new column
+                std::optional<float> COL_W = std::nullopt;
+                if (const auto stored_width = getColWidth(); stored_width > 0)
+                    COL_W = std::optional(stored_width);
+                if (WITHIN_RANGE_LEFT)
+                    droppingColumn = m_scrollingData->add(m_scrollingData->idx(droppingColumn) - 1, COL_W);
+                else
+                    droppingColumn = m_scrollingData->add(m_scrollingData->idx(droppingColumn), COL_W);
+
                 droppingColumn->add(target);
-                m_scrollingData->fitCol(droppingColumn);
             }
+
+            m_scrollingData->fitCol(droppingColumn);
         } else {
             auto idx  = m_scrollingData->idx(droppingColumn);
             auto colW = getColWidth();
@@ -1555,7 +1565,7 @@ Config::ErrorResult CScrollingAlgorithm::layoutMsg(const std::string_view& sv) {
 
             focusTargetUpdate(COL->targetDatas.front()->target.lock());
             if (COL->targetDatas.front()->target->window())
-                g_pCompositor->warpCursorTo(COL->targetDatas.front()->target->window()->middle());
+                Pointer::pointerController()->warpTo(COL->targetDatas.front()->target->window()->middle());
 
             return {};
         } else if (ARGS[1] == "-col") {
@@ -1566,7 +1576,7 @@ Config::ErrorResult CScrollingAlgorithm::layoutMsg(const std::string_view& sv) {
                     m_scrollingData->recalculate();
                     focusTargetUpdate((m_scrollingData->columns.back()->targetDatas.back())->target.lock());
                     if (m_scrollingData->columns.back()->targetDatas.back()->target->window())
-                        g_pCompositor->warpCursorTo((m_scrollingData->columns.back()->targetDatas.back())->target->window()->middle());
+                        Pointer::pointerController()->warpTo((m_scrollingData->columns.back()->targetDatas.back())->target->window()->middle());
                 }
 
                 return {};
@@ -1581,7 +1591,7 @@ Config::ErrorResult CScrollingAlgorithm::layoutMsg(const std::string_view& sv) {
 
             focusTargetUpdate(COL->targetDatas.back()->target.lock());
             if (COL->targetDatas.front()->target->window())
-                g_pCompositor->warpCursorTo(COL->targetDatas.front()->target->window()->middle());
+                Pointer::pointerController()->warpTo(COL->targetDatas.front()->target->window()->middle());
 
             return {};
         }
@@ -1859,7 +1869,7 @@ Config::ErrorResult CScrollingAlgorithm::layoutMsg(const std::string_view& sv) {
 
             focusTargetUpdate(PREV->target.lock());
             if (PREV->target->window())
-                g_pCompositor->warpCursorTo(PREV->target->window()->middle());
+                Pointer::pointerController()->warpTo(PREV->target->window()->middle());
         } else if (isNextInStrip) {
             // Move to next target within current strip
             auto NEXT = TDATA->column->next(TDATA);
@@ -1872,7 +1882,7 @@ Config::ErrorResult CScrollingAlgorithm::layoutMsg(const std::string_view& sv) {
 
             focusTargetUpdate(NEXT->target.lock());
             if (NEXT->target->window())
-                g_pCompositor->warpCursorTo(NEXT->target->window()->middle());
+                Pointer::pointerController()->warpTo(NEXT->target->window()->middle());
         } else if (isPrevStrip) {
             // Move to previous strip
             auto PREV = m_scrollingData->prev(TDATA->column.lock());
@@ -1881,7 +1891,7 @@ Config::ErrorResult CScrollingAlgorithm::layoutMsg(const std::string_view& sv) {
                     centerOrFit(TDATA->column.lock());
                     m_scrollingData->recalculate();
                     if (TDATA->target->window())
-                        g_pCompositor->warpCursorTo(TDATA->target->window()->middle());
+                        Pointer::pointerController()->warpTo(TDATA->target->window()->middle());
                     return {};
                 } else
                     PREV = (*PCONFWRAPFOCUS == 1) ? m_scrollingData->columns.back() : m_scrollingData->columns.front();
@@ -1893,7 +1903,7 @@ Config::ErrorResult CScrollingAlgorithm::layoutMsg(const std::string_view& sv) {
                 centerOrFit(PREV);
                 m_scrollingData->recalculate();
                 if (pTargetData->target->window())
-                    g_pCompositor->warpCursorTo(pTargetData->target->window()->middle());
+                    Pointer::pointerController()->warpTo(pTargetData->target->window()->middle());
             }
         } else if (isNextStrip) {
             // Move to next strip
@@ -1903,7 +1913,7 @@ Config::ErrorResult CScrollingAlgorithm::layoutMsg(const std::string_view& sv) {
                     centerOrFit(TDATA->column.lock());
                     m_scrollingData->recalculate();
                     if (TDATA->target->window())
-                        g_pCompositor->warpCursorTo(TDATA->target->window()->middle());
+                        Pointer::pointerController()->warpTo(TDATA->target->window()->middle());
                     return {};
                 } else
                     NEXT = (*PCONFWRAPFOCUS == 1) ? m_scrollingData->columns.front() : m_scrollingData->columns.back();
@@ -1915,7 +1925,7 @@ Config::ErrorResult CScrollingAlgorithm::layoutMsg(const std::string_view& sv) {
                 centerOrFit(NEXT);
                 m_scrollingData->recalculate();
                 if (pTargetData->target->window())
-                    g_pCompositor->warpCursorTo(pTargetData->target->window()->middle());
+                    Pointer::pointerController()->warpTo(pTargetData->target->window()->middle());
             }
         }
     } else if (ARGS[0] == "promote" || ARGS[0] == "consume" || ARGS[0] == "expel" || ARGS[0] == "consume_or_expel") {

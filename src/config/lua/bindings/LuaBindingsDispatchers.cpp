@@ -177,7 +177,7 @@ static int dsp_submap(lua_State* L) {
 }
 
 static int dsp_pass(lua_State* L) {
-    const auto PWINDOW = g_pCompositor->getWindowByRegex(lua_tostring(L, lua_upvalueindex(1)));
+    const auto PWINDOW = Desktop::viewState()->query().selector(lua_tostring(L, lua_upvalueindex(1))).runWindow();
     if (!PWINDOW)
         return Internal::dispatcherError(L, "hl.pass: window not found", WARN, C_NOTFOUND);
 
@@ -393,7 +393,7 @@ static int dsp_sendShortcut(lua_State* L) {
 
     PHLWINDOW window = nullptr;
     if (!lua_isnil(L, lua_upvalueindex(3))) {
-        window = g_pCompositor->getWindowByRegex(lua_tostring(L, lua_upvalueindex(3)));
+        window = Desktop::viewState()->query().selector(lua_tostring(L, lua_upvalueindex(3))).runWindow();
         if (!window)
             return Internal::dispatcherError(L, "send_shortcut: window not found", WARN, C_NOTFOUND);
     }
@@ -415,7 +415,7 @@ static int dsp_sendKeyState(lua_State* L) {
 
     PHLWINDOW window = nullptr;
     if (!lua_isnil(L, lua_upvalueindex(4))) {
-        window = g_pCompositor->getWindowByRegex(lua_tostring(L, lua_upvalueindex(4)));
+        window = Desktop::viewState()->query().selector(lua_tostring(L, lua_upvalueindex(4))).runWindow();
         if (!window)
             return Internal::dispatcherError(L, "send_key_state: window not found", WARN, C_NOTFOUND);
     }
@@ -594,7 +594,7 @@ static int dsp_swapWithWindow(lua_State* L) {
     auto       source = Internal::windowFromUpval(L, 1);
 
     const auto targetSelector = lua_tostring(L, lua_upvalueindex(2));
-    const auto target         = g_pCompositor->getWindowByRegex(targetSelector);
+    const auto target         = Desktop::viewState()->query().selector(targetSelector).runWindow();
     if (!target)
         return Internal::dispatcherError(L, "hl.window.swap: target window not found", WARN, C_NOTFOUND);
 
@@ -1076,7 +1076,7 @@ static int dsp_focusMonitor(lua_State* L) {
 }
 
 static int dsp_focusWindowBySelector(lua_State* L) {
-    const auto PWINDOW = g_pCompositor->getWindowByRegex(lua_tostring(L, lua_upvalueindex(1)));
+    const auto PWINDOW = Desktop::viewState()->query().selector(lua_tostring(L, lua_upvalueindex(1))).runWindow();
     if (!PWINDOW)
         return Internal::dispatcherError(L, "hl.focus: window not found", WARN, C_NOTFOUND);
     return Internal::checkResult(L, CA::focus(PWINDOW));
@@ -1193,6 +1193,16 @@ static int dsp_renameWorkspace(lua_State* L) {
     return Internal::checkResult(L, CA::renameWorkspace(PWS, name));
 }
 
+static int dsp_workspaceChangeID(lua_State* L) {
+    const auto PWS = State::workspaceState()->query().string(lua_tostring(L, lua_upvalueindex(1))).run();
+    if (!PWS)
+        return Internal::dispatcherError(L, "hl.workspace.change_id: no such workspace", WARN, C_NOTFOUND);
+    if (PWS->m_id <= 0)
+        return Internal::dispatcherError(L, "hl.workspace.change_id: cannot change id of workspace with a managed id", WARN, C_NOTFOUND);
+    int64_t id = lua_tonumber(L, lua_upvalueindex(2));
+    return Internal::checkResult(L, CA::changeWorkspaceID(PWS, id));
+}
+
 static int dsp_moveWorkspaceToMonitor(lua_State* L) {
     const auto WORKSPACEID = getWorkspaceIDNameFromString(lua_tostring(L, lua_upvalueindex(1))).id;
     if (WORKSPACEID == WORKSPACE_INVALID)
@@ -1243,6 +1253,22 @@ static int hlWorkspaceRename(lua_State* L) {
     else
         lua_pushnil(L);
     lua_pushcclosure(L, dsp_renameWorkspace, 2);
+    return 1;
+}
+
+static int hlWorkspaceChangeID(lua_State* L) {
+    if (!lua_istable(L, 1))
+        return Internal::configError(L, "hl.workspace.change_id: expected a table { workspace, id }");
+
+    const auto workspace = Internal::requireTableFieldWorkspaceSelector(L, 1, "workspace", "hl.workspace.change_id");
+    auto       newID     = Internal::requireTableFieldNum(L, 1, "id", "hl.workspace.change_id");
+
+    if (newID <= 0 || newID >= std::numeric_limits<uint32_t>::max())
+        return Internal::configError(L, "hl.workspace.change_id: bad id");
+
+    lua_pushstring(L, workspace.c_str());
+    lua_pushnumber(L, newID);
+    lua_pushcclosure(L, dsp_workspaceChangeID, 2);
     return 1;
 }
 
@@ -1327,6 +1353,7 @@ void Internal::registerDispatcherBindings(lua_State* L) {
         lua_newtable(L);
         Internal::markDispatcherTable(L);
         Internal::setFn(L, "rename", hlWorkspaceRename);
+        Internal::setFn(L, "change_id", hlWorkspaceChangeID);
         Internal::setFn(L, "move", hlWorkspaceMove);
         Internal::setFn(L, "swap_monitors", hlWorkspaceSwapMonitors);
         Internal::setFn(L, "toggle_special", hlWorkspaceToggleSpecial);

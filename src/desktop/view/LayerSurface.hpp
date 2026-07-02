@@ -7,12 +7,13 @@
 #include "../rule/layerRule/LayerRuleApplicator.hpp"
 #include "../../helpers/AnimatedVariable.hpp"
 #include "../../render/Framebuffer.hpp"
+#include "types/GeometricMovableAnimated.hpp"
 
 class CLayerShellResource;
 
 namespace Desktop::View {
 
-    class CLayerSurface : public IView {
+    class CLayerSurface : public IView, public virtual CGeometricMovableAnimated {
       public:
         static PHLLS create(SP<CLayerShellResource>);
         static PHLLS fromView(SP<IView>);
@@ -29,14 +30,14 @@ namespace Desktop::View {
         virtual bool                desktopComponent() const;
         virtual std::optional<CBox> surfaceLogicalBox() const;
 
-        bool                        isFadedOut();
         int                         popupsCount();
 
-        PHLANIMVAR<Vector2D>        m_realPosition;
-        PHLANIMVAR<Vector2D>        m_realSize;
-        PHLANIMVAR<float>           m_alpha;
+        using CGeometricMovableAnimated::m_realPosition;
+        using CGeometricMovableAnimated::m_realSize;
 
-        WP<CLayerShellResource>     m_layerSurface;
+        PHLANIMVAR<float>       m_alpha;
+
+        WP<CLayerShellResource> m_layerSurface;
 
         // the header providing the enum type cannot be imported here
         int                                     m_interactivity = 0;
@@ -46,8 +47,6 @@ namespace Desktop::View {
 
         PHLMONITORREF                           m_monitor;
 
-        bool                                    m_fadingOut       = false;
-        bool                                    m_readyToDelete   = false;
         bool                                    m_noProcess       = false;
         bool                                    m_aboveFullscreen = true;
 
@@ -59,8 +58,6 @@ namespace Desktop::View {
         Vector2D                                m_position;
         std::string                             m_namespace = "";
         SP<Desktop::View::CPopup>               m_popupHead;
-
-        SP<Render::IFramebuffer>                m_snapshotFB;
 
         pid_t                                   getPID();
         void                                    updateSurfaceScaleTransformDetails();
@@ -95,13 +92,13 @@ namespace Desktop::View {
         return !!l;
     }
 
-    inline bool validMapped(PHLLS l) {
+    inline bool validMapped(const PHLLS& l) {
         if (!valid(l))
             return false;
         return l->aliveAndVisible();
     }
 
-    inline bool validMapped(PHLLSREF l) {
+    inline bool validMapped(const PHLLSREF& l) {
         if (!valid(l))
             return false;
         return l->aliveAndVisible();

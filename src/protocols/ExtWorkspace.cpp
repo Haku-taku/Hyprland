@@ -6,6 +6,7 @@
 #include <utility>
 #include "core/Output.hpp"
 #include "../state/MonitorState.hpp"
+#include "../state/WorkspacePlacementController.hpp"
 #include "../state/WorkspaceState.hpp"
 
 CExtWorkspaceGroupResource::CExtWorkspaceGroupResource(WP<CExtWorkspaceManagerResource> manager, UP<CExtWorkspaceGroupHandleV1> resource, PHLMONITORREF monitor) :
@@ -94,6 +95,13 @@ CExtWorkspaceResource::CExtWorkspaceResource(WP<CExtWorkspaceManagerResource> ma
     m_listeners.monitorChanged = m_workspace->m_events.monitorChanged.listen([this] { this->sendGroup(); });
 
     m_listeners.renamed = m_workspace->m_events.renamed.listen([this] {
+        m_resource->sendName(m_workspace->m_name.c_str());
+
+        if (m_manager)
+            m_manager->scheduleDone();
+    });
+
+    m_listeners.idChanged = m_workspace->m_events.idChanged.listen([this] {
         m_resource->sendName(m_workspace->m_name.c_str());
 
         if (m_manager)
@@ -203,7 +211,7 @@ void CExtWorkspaceResource::commit() {
         m_workspace->m_monitor->setSpecialWorkspace(nullptr);
 
     if (m_pendingState.targetMonitor && m_workspace && m_workspace->m_monitor != m_pendingState.targetMonitor)
-        g_pCompositor->moveWorkspaceToMonitor(m_workspace.lock(), m_pendingState.targetMonitor.lock(), true);
+        State::workspacePlacementController()->moveWorkspaceToMonitor(m_workspace.lock(), m_pendingState.targetMonitor.lock(), true);
 
     if (m_pendingState.activate && !isActive() && m_workspace)
         m_workspace->m_monitor->changeWorkspace(m_workspace.lock());

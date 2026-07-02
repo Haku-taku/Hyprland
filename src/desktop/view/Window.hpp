@@ -21,6 +21,7 @@
 #include "../rule/windowRule/WindowRuleApplicator.hpp"
 #include "../../protocols/types/ContentType.hpp"
 #include "../../render/Framebuffer.hpp"
+#include "types/GeometricMovableAnimated.hpp"
 
 class CXDGSurfaceResource;
 class CXWaylandSurface;
@@ -112,7 +113,7 @@ namespace Desktop::View {
         eFullscreenMode client   = FSMODE_NONE;
     };
 
-    class CWindow : public IView {
+    class CWindow : public IView, public virtual CGeometricMovableAnimated {
       public:
         static PHLWINDOW create(SP<CXDGSurfaceResource>);
         static PHLWINDOW create(SP<CXWaylandSurface>);
@@ -131,6 +132,9 @@ namespace Desktop::View {
         virtual bool                desktopComponent() const;
         virtual std::optional<CBox> surfaceLogicalBox() const;
 
+        using CGeometricMovableAnimated::m_realPosition;
+        using CGeometricMovableAnimated::m_realSize;
+
         struct {
             CSignalT<> destroy;
             CSignalT<> unmap;
@@ -143,14 +147,6 @@ namespace Desktop::View {
         WP<CXWaylandSurface>    m_xwaylandSurface;
 
         SP<Layout::ITarget>     m_target;
-
-        // this is the position and size of the "bounding box"
-        Vector2D m_position = Vector2D(0, 0);
-        Vector2D m_size     = Vector2D(0, 0);
-
-        // this is the real position and size used to draw the thing
-        PHLANIMVAR<Vector2D> m_realPosition;
-        PHLANIMVAR<Vector2D> m_realSize;
 
         // for not spamming the protocols
         Vector2D                                     m_reportedPosition;
@@ -199,6 +195,11 @@ namespace Desktop::View {
         // bitfield suppressEvents
         uint64_t m_suppressedEvents = SUPPRESS_NONE;
 
+        // Armed on FSMODE_FULLSCREEN exit to swallow the set_maximized that clients send to restore state.
+        // Hyprland sends XDG_TOPLEVEL_STATE_MAXIMIZED to tiled windows to suppress CSD.
+        // Clients echoing it back would enter FSMODE_MAXIMIZED.
+        bool m_suppressNextMaximize = false;
+
         // desktop components
         SP<Desktop::View::CSubsurface> m_subsurfaceHead;
         SP<Desktop::View::CPopup>      m_popupHead;
@@ -215,11 +216,6 @@ namespace Desktop::View {
 
         // Fade in-out
         Desktop::Types::CMultiAVarContainer<float, eWindowAlpha, WINDOW_ALPHA_LAST> m_alpha;
-        bool                                                                        m_fadingOut     = false;
-        bool                                                                        m_readyToDelete = false;
-        Vector2D                                                                    m_originalClosedPos;  // these will be used for calculations later on in
-        Vector2D                                                                    m_originalClosedSize; // drawing the closing animations
-        SBoxExtents                                                                 m_originalClosedExtents;
         bool                                                                        m_animatingIn = false;
 
         // For pinned (sticky) windows
@@ -284,9 +280,6 @@ namespace Desktop::View {
         // Stable ID for ext_foreign_toplevel_list
         const uint64_t m_stableID = 0x2137;
 
-        // snapshots
-        SP<Render::IFramebuffer> m_snapshotFB;
-
         // ANR
         PHLANIMVAR<float> m_notRespondingTint;
 
@@ -299,13 +292,11 @@ namespace Desktop::View {
         } m_layoutFlags;
 
         // For the list lookup
-        bool operator==(const CWindow& rhs) const {
-            return m_xdgSurface == rhs.m_xdgSurface && m_xwaylandSurface == rhs.m_xwaylandSurface && m_position == rhs.m_position && m_size == rhs.m_size &&
-                m_fadingOut == rhs.m_fadingOut;
-        }
+        bool operator==(const CWindow& rhs) const;
 
         // methods
         CBox                              getFullWindowBoundingBox() const;
+        CBox                              layoutBox() const;
         SBoxExtents                       getFullWindowExtents() const;
         CBox                              getWindowBoxUnified(uint64_t props);
         SBoxExtents                       getWindowExtentsUnified(uint64_t props);
@@ -320,7 +311,7 @@ namespace Desktop::View {
         void                              updateToplevel();
         void                              updateSurfaceScaleTransformDetails(bool force = false);
         void                              moveToWorkspace(PHLWORKSPACE);
-        PHLWINDOW                         x11TransientFor();
+        PHLWINDOW                         x11Parent() const;
         void                              onUnmap();
         void                              onMap();
         void                              setHidden(bool hidden);
@@ -418,7 +409,7 @@ namespace Desktop::View {
         void                              sendClose();
 
         CBox                              getWindowMainSurfaceBox() const {
-            return {m_realPosition->value().x, m_realPosition->value().y, m_realSize->value().x, m_realSize->value().y};
+            return geometricBox(GEOMETRIC_CURRENT);
         }
 
         // listeners
@@ -461,21 +452,21 @@ namespace Desktop::View {
         uint32_t    m_inputBlockReasons = INPUT_BLOCK_NONE;
     };
 
-    inline bool valid(PHLWINDOW w) {
+    inline bool valid(const PHLWINDOW& w) {
         return w.get();
     }
 
-    inline bool valid(PHLWINDOWREF w) {
+    inline bool valid(const PHLWINDOWREF& w) {
         return !w.expired();
     }
 
-    inline bool validMapped(PHLWINDOW w) {
+    inline bool validMapped(const PHLWINDOW& w) {
         if (!valid(w))
             return false;
         return w->m_isMapped;
     }
 
-    inline bool validMapped(PHLWINDOWREF w) {
+    inline bool validMapped(const PHLWINDOWREF& w) {
         if (!valid(w))
             return false;
         return w->m_isMapped;

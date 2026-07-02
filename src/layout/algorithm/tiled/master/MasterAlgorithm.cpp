@@ -8,7 +8,9 @@
 #include "../../../../config/shared/actions/ConfigActions.hpp"
 #include "../../../../config/shared/workspace/WorkspaceRuleManager.hpp"
 #include "../../../../desktop/state/FocusState.hpp"
+#include "../../../../desktop/state/WindowState.hpp"
 #include "../../../../output/Monitor.hpp"
+#include "../../../../pointer/PointerController.hpp"
 #include "../../../../Compositor.hpp"
 #include "../../../../render/Renderer.hpp"
 #include "../../../../state/MonitorState.hpp"
@@ -464,7 +466,7 @@ void CMasterAlgorithm::swapTargets(SP<ITarget> a, SP<ITarget> b) {
 void CMasterAlgorithm::moveTargetInDirection(SP<ITarget> t, Math::eDirection dir, bool silent) {
     static auto PMONITORFALLBACK = CConfigValue<Config::INTEGER>("binds:window_direction_monitor_fallback");
 
-    const auto  PWINDOW2 = g_pCompositor->getWindowInDirection(t->window(), dir);
+    const auto  PWINDOW2 = Desktop::windowState()->query().inDirection(t->window(), dir);
 
     if (!t->window())
         return;
@@ -509,7 +511,7 @@ Config::ErrorResult CMasterAlgorithm::layoutMsg(const std::string_view& sv) {
             return;
 
         Desktop::focusState()->fullWindowFocus(target->window(), Desktop::FOCUS_REASON_KEYBIND);
-        g_pCompositor->warpCursorTo(target->position().middle());
+        Pointer::pointerController()->warpTo(target->position().middle());
 
         g_pInputManager->m_forcedFocus = target->window();
         g_pInputManager->simulateMouseMovement();

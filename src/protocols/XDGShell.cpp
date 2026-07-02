@@ -12,7 +12,6 @@
 #include "../desktop/view/Window.hpp"
 #include "protocols/core/Output.hpp"
 #include <cstddef>
-#include <cstring>
 #include <ranges>
 
 void SXDGPositionerState::setAnchor(xdgPositionerAnchor edges) {
@@ -198,9 +197,14 @@ CXDGToplevelResource::CXDGToplevelResource(SP<CXdgToplevel> resource_, SP<CXDGSu
     });
 
     m_resource->setSetFullscreen([this](CXdgToplevel* r, wl_resource* output) {
-        if (output)
-            if (const auto PM = CWLOutputResource::fromResource(output)->m_monitor; PM)
-                m_state.requestsFullscreenMonitor = PM->m_id;
+        if (output) {
+            const auto OUTPUT = CWLOutputResource::fromResource(output);
+            if (OUTPUT) {
+                if (const auto PM = OUTPUT->m_monitor; PM)
+                    m_state.requestsFullscreenMonitor = PM->m_id;
+            } else
+                LOGM(Log::ERR, "Client requested fullscreen on an invalid output resource");
+        }
 
         m_state.requestsFullscreen = true;
         m_events.stateChanged.emit();
@@ -367,10 +371,8 @@ void CXDGToplevelResource::scheduleStateApplication() {
         wl_array arr;
         wl_array_init(&arr);
 
-        if (!m_pendingApply.states.empty()) {
-            wl_array_add(&arr, m_pendingApply.states.size() * sizeof(int));
-            memcpy(arr.data, m_pendingApply.states.data(), m_pendingApply.states.size() * sizeof(int));
-        }
+        if (const auto PSTATES = sc<int*>(wl_array_add(&arr, m_pendingApply.states.size() * sizeof(int))))
+            std::ranges::copy(m_pendingApply.states, PSTATES);
 
         m_resource->sendConfigure(m_pendingApply.size.x, m_pendingApply.size.y, &arr);
 
@@ -481,7 +483,7 @@ CXDGSurfaceResource::CXDGSurfaceResource(SP<CXdgSurface> resource_, SP<CXDGWMBas
 
         LOGM(Log::DEBUG, "xdg_surface {:x} gets a toplevel {:x}", (uintptr_t)m_owner.get(), (uintptr_t)RESOURCE.get());
 
-        PHLWINDOW createdWindow = g_pCompositor->m_windows.emplace_back(Desktop::View::CWindow::create(m_self.lock()));
+        PHLWINDOW createdWindow = Desktop::View::CWindow::create(m_self.lock());
 
         if (RESOURCE->m_parent && RESOURCE->m_parent->m_window->m_pinned)
             createdWindow->m_pinned = true;

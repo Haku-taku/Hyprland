@@ -2,6 +2,8 @@
 #include "../../config/ConfigValue.hpp"
 #include "../../config/shared/animation/AnimationTree.hpp"
 #include "../../Compositor.hpp"
+#include "../state/FadingOutState.hpp"
+#include "../state/PopupFadeout.hpp"
 #include "../../protocols/LayerShell.hpp"
 #include "../../protocols/XDGShell.hpp"
 #include "../../protocols/core/Compositor.hpp"
@@ -12,6 +14,7 @@
 #include "../../managers/eventLoop/EventLoopManager.hpp"
 #include "../../render/Renderer.hpp"
 #include "../../render/OpenGL.hpp"
+#include "../../output/Monitor.hpp"
 #include "../../state/MonitorState.hpp"
 #include <array>
 #include <ranges>
@@ -24,6 +27,7 @@ SP<CPopup> CPopup::create(PHLWINDOW pOwner) {
     popup->m_windowOwner = pOwner;
     popup->m_self        = popup;
     popup->initAllSignals();
+    popup->initView(popup, VIEW_TYPE_POPUP);
     return popup;
 }
 
@@ -32,6 +36,7 @@ SP<CPopup> CPopup::create(PHLLS pOwner) {
     popup->m_layerOwner = pOwner;
     popup->m_self       = popup;
     popup->initAllSignals();
+    popup->initView(popup, VIEW_TYPE_POPUP);
     return popup;
 }
 
@@ -48,6 +53,7 @@ SP<CPopup> CPopup::create(SP<CXDGPopupResource> resource, WP<CPopup> pOwner) {
     popup->reposition();
 
     popup->initAllSignals();
+    popup->initView(popup, VIEW_TYPE_POPUP);
     return popup;
 }
 
@@ -71,9 +77,6 @@ eViewType CPopup::type() const {
 }
 
 bool CPopup::visible() const {
-    if (m_fadingOut && m_alpha->value() > 0.F)
-        return true;
-
     if (!m_mapped || !m_wlSurface->resource())
         return false;
 
@@ -97,7 +100,19 @@ std::optional<CBox> CPopup::surfaceLogicalBox() const {
     if (!visible())
         return std::nullopt;
 
-    return CBox{coordsGlobal(), size()};
+    return geometricBox(GEOMETRIC_CURRENT);
+}
+
+Vector2D CPopup::position(eGeometricValueType) const {
+    return coordsGlobal();
+}
+
+Vector2D CPopup::size(eGeometricValueType) const {
+    return size();
+}
+
+CBox CPopup::geometricBox(eGeometricValueType t) const {
+    return {position(t), size(t)};
 }
 
 bool CPopup::desktopComponent() const {
@@ -169,11 +184,6 @@ void CPopup::onDestroy() {
     m_listeners.unmap.reset();
     m_listeners.commit.reset();
     m_listeners.newPopup.reset();
-
-    if (m_fadingOut && m_alpha->isBeingAnimated()) {
-        Log::logger->log(Log::DEBUG, "popup {:x}: skipping full destroy, animating", rc<uintptr_t>(this));
-        return;
-    }
 
     fullyDestroy();
 }
@@ -257,12 +267,14 @@ void CPopup::onUnmap() {
 
     m_lastSize = MAX_DAMAGE_SIZE;
 
-    g_pHyprRenderer->makeSnapshot(m_self);
+    const auto SNAPSHOT    = g_pHyprRenderer->makeSnapshotFB(m_self);
+    const auto SOURCEALPHA = m_alpha->value();
 
-    m_fadingOut = true;
     m_alpha->setConfig(Config::animationTree()->getAnimationPropertyConfig("fadePopupsOut"));
     m_alpha->setValueAndWarp(1.F);
     *m_alpha = 0.F;
+
+    Desktop::fadingOutState()->add(CPopupFadeout::create(m_self.lock(), SNAPSHOT, SOURCEALPHA));
 
     m_mapped = false;
 
@@ -459,13 +471,10 @@ Vector2D CPopup::size() const {
 }
 
 void CPopup::sendScale() {
-    float scale;
-    if (!m_windowOwner.expired())
-        scale = m_windowOwner->wlSurface()->m_lastScaleFloat;
-    else if (!m_layerOwner.expired())
-        scale = m_layerOwner->wlSurface()->m_lastScaleFloat;
-    else
-        UNREACHABLE();
+    const auto PMONITOR = getMonitor();
+
+    if (!PMONITOR)
+        return;
 
     // Walk the whole surface tree, not just the popup's root surface: a popup
     // can wrap its content in subsurfaces (e.g. Firefox/GTK render the popup
@@ -473,7 +482,16 @@ void CPopup::sendScale() {
     // those subsurfaces at the default 1.0 fractional scale, so under
     // fractional scaling the content renders at the wrong size and the input
     // geometry desyncs from the visible geometry. Mirrors CWindow::sendScale.
-    m_wlSurface->resource()->breadthfirst([scale](SP<CWLSurfaceResource> s, const Vector2D& offset, void* d) { g_pCompositor->setPreferredScaleForSurface(s, scale); }, nullptr);
+    m_wlSurface->resource()->breadthfirst(
+        [PMONITOR](SP<CWLSurfaceResource> s, const Vector2D& offset, void* d) {
+            const auto PSURFACE = CWLSurface::fromResource(s);
+
+            if (!PSURFACE)
+                return;
+
+            PSURFACE->sendScale(PMONITOR->m_scale);
+        },
+        nullptr);
 }
 
 void CPopup::bfHelper(std::span<const SP<CPopup>> nodes, std::function<void(SP<CPopup>, void*)> fn, void* data) {

@@ -1,5 +1,6 @@
 #include "InputManager.hpp"
 #include "../../Compositor.hpp"
+#include "../../desktop/state/FocusState.hpp"
 #include "../../protocols/IdleInhibit.hpp"
 #include "../../protocols/IdleNotify.hpp"
 #include "../../protocols/core/Compositor.hpp"
@@ -50,7 +51,7 @@ void CInputManager::recheckIdleInhibitorStatus() {
     }
 
     // check manual user-set inhibitors
-    for (auto const& w : g_pCompositor->m_windows) {
+    for (auto const& w : Desktop::windowState()->windows()) {
         if (isWindowInhibiting(w)) {
             PROTO::idle->setInhibit(true);
             return;
@@ -64,7 +65,7 @@ bool CInputManager::isWindowInhibiting(const PHLWINDOW& w, bool onlyHl) {
     if (w->m_ruleApplicator->idleInhibitMode().valueOrDefault() == Desktop::Rule::IDLEINHIBIT_ALWAYS)
         return true;
 
-    if (w->m_ruleApplicator->idleInhibitMode().valueOrDefault() == Desktop::Rule::IDLEINHIBIT_FOCUS && g_pCompositor->isWindowActive(w))
+    if (w->m_ruleApplicator->idleInhibitMode().valueOrDefault() == Desktop::Rule::IDLEINHIBIT_FOCUS && Desktop::focusState()->isWindowActive(w))
         return true;
 
     if (w->m_ruleApplicator->idleInhibitMode().valueOrDefault() == Desktop::Rule::IDLEINHIBIT_FULLSCREEN && w->isFullscreen() && w->m_workspace && w->m_workspace->isVisible())

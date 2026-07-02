@@ -27,7 +27,7 @@ enum ePluginRepoIdentifierType {
 };
 
 struct SPluginRepoIdentifier {
-    ePluginRepoIdentifierType    type;
+    ePluginRepoIdentifierType    type   = IDENTIFIER_URL;
     std::string                  url    = "";
     std::string                  name   = "";
     std::string                  author = "";

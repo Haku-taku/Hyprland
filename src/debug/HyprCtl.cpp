@@ -44,7 +44,7 @@ using namespace Hyprutils::OS;
 #include "../config/shared/animation/AnimationTree.hpp"
 #include "../config/supplementary/jeremy/Jeremy.hpp"
 #include "../config/values/ConfigValues.hpp"
-#include "../managers/CursorManager.hpp"
+#include "../pointer/cursor/CursorManager.hpp"
 #include "../errorOverlay/Overlay.hpp"
 #include "../devices/IPointer.hpp"
 #include "../devices/IKeyboard.hpp"
@@ -451,7 +451,7 @@ static std::string clientsRequest(eHyprCtlOutputFormat format, std::string reque
     if (format == eHyprCtlOutputFormat::FORMAT_JSON) {
         result += "[";
 
-        for (auto const& w : g_pCompositor->m_windows) {
+        for (auto const& w : Desktop::windowState()->windows()) {
             if (!w->m_isMapped && !g_pHyprCtl->m_currentRequestParams.all)
                 continue;
 
@@ -462,7 +462,7 @@ static std::string clientsRequest(eHyprCtlOutputFormat format, std::string reque
 
         result += "]";
     } else {
-        for (auto const& w : g_pCompositor->m_windows) {
+        for (auto const& w : Desktop::windowState()->windows()) {
             if (!w->m_isMapped && !g_pHyprCtl->m_currentRequestParams.all)
                 continue;
 
@@ -499,12 +499,12 @@ std::string CHyprCtl::getWorkspaceData(PHLWORKSPACE w, eHyprCtlOutputFormat form
     "tiledLayout": "{}"
 }})#",
                            w->m_id, escapeJSONStrings(w->m_name), escapeJSONStrings(PMONITOR ? PMONITOR->m_name : "?"),
-                           escapeJSONStrings(PMONITOR ? std::to_string(PMONITOR->m_id) : "null"), w->getWindows(), w->m_hasFullscreenWindow ? "true" : "false",
+                           escapeJSONStrings(PMONITOR ? std::to_string(PMONITOR->m_id) : "null"), w->getWindowCount(), w->m_hasFullscreenWindow ? "true" : "false",
                            rc<uintptr_t>(PLASTW.get()), PLASTW ? escapeJSONStrings(PLASTW->m_title) : "", w->isPersistent() ? "true" : "false", escapeJSONStrings(layoutName));
     } else {
         return std::format("workspace ID {} ({}) on monitor {}:\n\tmonitorID: {}\n\twindows: {}\n\thasfullscreen: {}\n\tlastwindow: 0x{:x}\n\tlastwindowtitle: {}\n\tispersistent: "
                            "{}\n\ttiledLayout: {}\n\n",
-                           w->m_id, w->m_name, PMONITOR ? PMONITOR->m_name : "?", PMONITOR ? std::to_string(PMONITOR->m_id) : "null", w->getWindows(),
+                           w->m_id, w->m_name, PMONITOR ? PMONITOR->m_name : "?", PMONITOR ? std::to_string(PMONITOR->m_id) : "null", w->getWindowCount(),
                            sc<int>(w->m_hasFullscreenWindow), rc<uintptr_t>(PLASTW.get()), PLASTW ? PLASTW->m_title : "", sc<int>(w->isPersistent()), layoutName);
     }
 }
@@ -1230,7 +1230,7 @@ static std::string dispatchKeyword(eHyprCtlOutputFormat format, std::string in) 
 
     if (COMMAND.contains("workspace"))
         State::workspacePlacementController()->ensurePersistentWorkspacesPresent(
-            nullptr, [](PHLWORKSPACE ws, PHLMONITOR mon, bool noWarp) { g_pCompositor->moveWorkspaceToMonitor(ws, mon, noWarp); });
+            nullptr, [](PHLWORKSPACE ws, PHLMONITOR mon, bool noWarp) { State::workspacePlacementController()->moveWorkspaceToMonitor(ws, mon, noWarp); });
 
     Log::logger->log(Log::DEBUG, "Hyprctl: keyword {} : {}", COMMAND, VALUE);
 
@@ -1333,7 +1333,7 @@ static std::string dispatchSetCursor(eHyprCtlOutputFormat format, std::string re
     if (size <= 0)
         return "size not positive";
 
-    if (!g_pCursorManager->changeTheme(theme, size))
+    if (!Pointer::Cursor::mgr()->changeTheme(theme, size))
         return "failed to set cursor";
 
     return "ok";
@@ -1452,7 +1452,7 @@ static std::string dispatchGetProp(eHyprCtlOutputFormat format, std::string requ
     const auto WINREGEX = vars[1];
     const auto PROP     = vars[2];
 
-    const auto PWINDOW = g_pCompositor->getWindowByRegex(WINREGEX);
+    const auto PWINDOW = Desktop::viewState()->query().selector(WINREGEX).runWindow();
 
     if (!PWINDOW)
         return "window not found";
@@ -1716,7 +1716,7 @@ static std::string dispatchGetOption(eHyprCtlOutputFormat format, std::string re
 
 static std::string decorationRequest(eHyprCtlOutputFormat format, std::string request) {
     CVarList   vars(request, 0, ' ');
-    const auto PWINDOW = g_pCompositor->getWindowByRegex(vars[1]);
+    const auto PWINDOW = Desktop::viewState()->query().selector(vars[1]).runWindow();
 
     if (!PWINDOW)
         return "none";
@@ -2122,7 +2122,7 @@ std::string CHyprCtl::getReply(std::string request) {
                 m->m_blurFBDirty = true;
         }
 
-        for (auto const& w : g_pCompositor->m_windows) {
+        for (auto const& w : Desktop::windowState()->windows()) {
             if (!w->m_isMapped || !w->m_workspace || !w->m_workspace->isVisible())
                 continue;
 

@@ -1,5 +1,8 @@
 #include "LayerSurface.hpp"
 #include "../state/FocusState.hpp"
+#include "../state/FadingOutState.hpp"
+#include "../state/LayerState.hpp"
+#include "../state/LayerFadeout.hpp"
 #include "../../Compositor.hpp"
 #include "../../protocols/LayerShell.hpp"
 #include "../../protocols/core/Compositor.hpp"
@@ -37,6 +40,8 @@ PHLLS CLayerSurface::create(SP<CLayerShellResource> resource) {
     pLS->registerCallbacks();
 
     pLS->m_alpha->setValueAndWarp(0.f);
+
+    pLS->initView(pLS, VIEW_TYPE_LAYER_SURFACE);
 
     if (!pMonitor) {
         Log::logger->log(Log::DEBUG, "LayerSurface {:x} (namespace {} layer {}) created on NO MONITOR ?!", rc<uintptr_t>(resource.get()), resource->m_layerNamespace,
@@ -93,7 +98,7 @@ eViewType CLayerSurface::type() const {
 }
 
 bool CLayerSurface::visible() const {
-    return (m_mapped && m_layerSurface && m_layerSurface->m_mapped && m_wlSurface && m_wlSurface->resource()) || (m_fadingOut && m_alpha->value() > 0.F);
+    return m_mapped && m_layerSurface && m_layerSurface->m_mapped && m_wlSurface && m_wlSurface->resource();
 }
 
 std::optional<CBox> CLayerSurface::logicalBox() const {
@@ -104,7 +109,7 @@ std::optional<CBox> CLayerSurface::surfaceLogicalBox() const {
     if (!visible())
         return std::nullopt;
 
-    return CBox{m_realPosition->value(), m_realSize->value()};
+    return geometricBox(GEOMETRIC_CURRENT);
 }
 
 bool CLayerSurface::desktopComponent() const {
@@ -114,22 +119,15 @@ bool CLayerSurface::desktopComponent() const {
 void CLayerSurface::onDestroy() {
     Log::logger->log(Log::DEBUG, "LayerSurface {:x} destroyed", rc<uintptr_t>(m_layerSurface.get()));
 
+    const auto SELF     = m_self.lock();
     const auto PMONITOR = m_monitor.lock();
 
     if (!PMONITOR)
         Log::logger->log(Log::WARN, "Layersurface destroyed on an invalid monitor (removed?)");
 
-    if (!m_fadingOut) {
-        if (m_mapped) {
-            Log::logger->log(Log::DEBUG, "Forcing an unmap of a LS that did a straight destroy!");
-            onUnmap();
-        } else {
-            Log::logger->log(Log::DEBUG, "Removing LayerSurface that wasn't mapped.");
-            if (m_alpha)
-                g_pDesktopAnimationManager->startAnimation(m_self.lock(), CDesktopAnimationManager::ANIMATION_TYPE_OUT);
-            m_fadingOut = true;
-            g_pCompositor->addToFadingOutSafe(m_self.lock());
-        }
+    if (m_mapped) {
+        Log::logger->log(Log::DEBUG, "Forcing an unmap of a LS that did a straight destroy!");
+        onUnmap();
     }
 
     m_popupHead.reset();
@@ -146,7 +144,6 @@ void CLayerSurface::onDestroy() {
         g_pHyprRenderer->damageBox(geomFixed);
     }
 
-    m_readyToDelete = true;
     m_layerSurface.reset();
     if (m_wlSurface)
         m_wlSurface->unassign();
@@ -155,6 +152,8 @@ void CLayerSurface::onDestroy() {
     m_listeners.destroy.reset();
     m_listeners.map.reset();
     m_listeners.commit.reset();
+
+    Desktop::layerState()->removeSafe(SELF);
 }
 
 void CLayerSurface::onMap() {
@@ -167,10 +166,6 @@ void CLayerSurface::onMap() {
     m_ruleApplicator->propertiesChanged(Desktop::Rule::RULE_PROP_ALL);
 
     m_layerSurface->m_surface->map();
-
-    // this layer might be re-mapped.
-    m_fadingOut = false;
-    g_pCompositor->removeFromFadingOutSafe(m_self.lock());
 
     // fix if it changed its mon
     const auto PMONITOR = m_monitor.lock();
@@ -214,9 +209,6 @@ void CLayerSurface::onMap() {
 
     g_pDesktopAnimationManager->startAnimation(m_self.lock(), CDesktopAnimationManager::ANIMATION_TYPE_IN);
 
-    m_readyToDelete = false;
-    m_fadingOut     = false;
-
     g_pEventManager->postEvent(SHyprIPCEvent{.event = "openlayer", .data = m_namespace});
     Event::bus()->m_events.layer.opened.emit(m_self.lock());
 
@@ -234,8 +226,6 @@ void CLayerSurface::onUnmap() {
     if (!m_monitor) {
         Log::logger->log(Log::WARN, "Layersurface unmapping on invalid monitor (removed?) ignoring.");
 
-        g_pCompositor->addToFadingOutSafe(m_self.lock());
-
         m_mapped = false;
         if (m_layerSurface && m_layerSurface->m_surface)
             m_layerSurface->m_surface->unmap();
@@ -249,17 +239,16 @@ void CLayerSurface::onUnmap() {
     m_realSize->warp();
 
     // make a snapshot and start fade
-    g_pHyprRenderer->makeSnapshot(m_self.lock());
+    const auto SNAPSHOT    = g_pHyprRenderer->makeSnapshotFB(m_self.lock());
+    const auto SOURCEALPHA = m_alpha->value();
 
     g_pDesktopAnimationManager->startAnimation(m_self.lock(), CDesktopAnimationManager::ANIMATION_TYPE_OUT);
 
-    m_fadingOut = true;
+    Desktop::fadingOutState()->add(CLayerFadeout::create(m_self.lock(), SNAPSHOT, SOURCEALPHA));
 
     m_mapped = false;
     if (m_layerSurface && m_layerSurface->m_surface)
         m_layerSurface->m_surface->unmap();
-
-    g_pCompositor->addToFadingOutSafe(m_self.lock());
 
     const auto PMONITOR = m_monitor.lock();
 
@@ -296,8 +285,7 @@ void CLayerSurface::onCommit() {
     if (!m_mapped) {
         // we're re-mapping if this is the case
         if (m_layerSurface->m_surface && !m_layerSurface->m_surface->m_current.texture) {
-            m_fadingOut = false;
-            m_geometry  = {};
+            m_geometry = {};
             g_pHyprRenderer->arrangeLayersForMonitor(monitorID());
         }
 
@@ -417,15 +405,8 @@ void CLayerSurface::onCommit() {
     updateSurfaceScaleTransformDetails();
 }
 
-bool CLayerSurface::isFadedOut() {
-    if (!m_fadingOut)
-        return false;
-
-    return !m_realPosition->isBeingAnimated() && !m_realSize->isBeingAnimated() && !m_alpha->isBeingAnimated();
-}
-
 int CLayerSurface::popupsCount() {
-    if (!m_layerSurface || !m_mapped || m_fadingOut || !m_popupHead)
+    if (!m_layerSurface || !m_mapped || !m_popupHead)
         return 0;
 
     return m_popupHead->popupTreeCount();
@@ -464,11 +445,12 @@ void CLayerSurface::updateSurfaceScaleTransformDetails() {
     surf->breadthfirst(
         [PMONITOR](SP<CWLSurfaceResource> s, const Vector2D& offset, void* d) {
             const auto PSURFACE = CWLSurface::fromResource(s);
-            if (PSURFACE && PSURFACE->m_lastScaleFloat == PMONITOR->m_scale)
+
+            if (!PSURFACE)
                 return;
 
-            g_pCompositor->setPreferredScaleForSurface(s, PMONITOR->m_scale);
-            g_pCompositor->setPreferredTransformForSurface(s, PMONITOR->m_transform);
+            PSURFACE->sendScale(PMONITOR->m_scale);
+            PSURFACE->sendTransform(PMONITOR->m_transform);
         },
         nullptr);
 }
