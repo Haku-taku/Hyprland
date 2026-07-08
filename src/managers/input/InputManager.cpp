@@ -950,8 +950,12 @@ void CInputManager::onMouseWheel(IPointer::SAxisEvent e, SP<IPointer> pointer) {
     static auto PEMULATEDISCRETE      = CConfigValue<Config::INTEGER>("input:emulate_discrete_scroll");
     static auto PFOLLOWMOUSE          = CConfigValue<Config::INTEGER>("input:follow_mouse");
 
-    const bool  ISTOUCHPADSCROLL = *PTOUCHPADSCROLLFACTOR <= 0.f || e.source == WL_POINTER_AXIS_SOURCE_FINGER;
-    auto        factor           = ISTOUCHPADSCROLL ? *PTOUCHPADSCROLLFACTOR : *PINPUTSCROLLFACTOR;
+    // some virtual pointers send smooth-only wheel events: synthesize the missing discrete value (15 smooth units per 120-unit detent)
+    if (e.source == WL_POINTER_AXIS_SOURCE_WHEEL && e.deltaDiscrete == 0 && e.delta != 0)
+        e.deltaDiscrete = std::round(e.delta * 8.0);
+
+    const bool ISTOUCHPADSCROLL = *PTOUCHPADSCROLLFACTOR <= 0.f || e.source == WL_POINTER_AXIS_SOURCE_FINGER;
+    auto       factor           = ISTOUCHPADSCROLL ? *PTOUCHPADSCROLLFACTOR : *PINPUTSCROLLFACTOR;
 
     if (pointer && pointer->m_scrollFactor.has_value())
         factor = *pointer->m_scrollFactor;
@@ -1323,6 +1327,13 @@ void CInputManager::setPointerConfigs() {
             } else if (!ENABLED && m->m_connected) {
                 Pointer::mgr()->detachPointer(m);
                 m->m_connected = false;
+            }
+
+            if (m->aq() && m->aq()->getLibinputHandle()) {
+                const auto LIBINPUTDEV = m->aq()->getLibinputHandle();
+                const auto mode        = ENABLED ? LIBINPUT_CONFIG_SEND_EVENTS_ENABLED : LIBINPUT_CONFIG_SEND_EVENTS_DISABLED;
+                if (libinput_device_config_send_events_get_mode(LIBINPUTDEV) != mode)
+                    libinput_device_config_send_events_set_mode(LIBINPUTDEV, mode);
             }
 
             for (const auto tagString : CVarList2(Config::mgr()->getDeviceString(devname, "tags"))) {
