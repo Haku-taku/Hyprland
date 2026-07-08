@@ -22,8 +22,6 @@
 #include "../../protocols/types/ContentType.hpp"
 #include "../../render/Framebuffer.hpp"
 #include "types/GeometricMovableAnimated.hpp"
-#include "types/AlphaModifiable.hpp"
-#include "animationControllers/WindowAnimationController.hpp"
 
 class CXDGSurfaceResource;
 class CXWaylandSurface;
@@ -115,7 +113,7 @@ namespace Desktop::View {
         eFullscreenMode client   = FSMODE_NONE;
     };
 
-    class CWindow : public virtual IView, public virtual CGeometricMovableAnimated, public virtual IAlphaModifiable {
+    class CWindow : public IView, public virtual CGeometricMovableAnimated {
       public:
         static PHLWINDOW create(SP<CXDGSurfaceResource>);
         static PHLWINDOW create(SP<CXWaylandSurface>);
@@ -128,13 +126,11 @@ namespace Desktop::View {
       public:
         virtual ~CWindow();
 
-        virtual eViewType                                   type() const override;
-        virtual bool                                        visible() const override;
-        virtual std::optional<CBox>                         logicalBox() const override;
-        virtual bool                                        desktopComponent() const override;
-        virtual std::optional<CBox>                         surfaceLogicalBox() const override;
-        virtual Types::CMultiAVarContainer<float, uint8_t>& alpha() override;
-        virtual std::optional<uint8_t>                      alphaGenericToKey(eAlphaModifiableProp p) override;
+        virtual eViewType           type() const;
+        virtual bool                visible() const;
+        virtual std::optional<CBox> logicalBox() const;
+        virtual bool                desktopComponent() const;
+        virtual std::optional<CBox> surfaceLogicalBox() const;
 
         using CGeometricMovableAnimated::m_realPosition;
         using CGeometricMovableAnimated::m_realSize;
@@ -219,7 +215,8 @@ namespace Desktop::View {
         mutable bool m_borderSizeCacheDirty = true;
 
         // Fade in-out
-        bool m_animatingIn = false;
+        Desktop::Types::CMultiAVarContainer<float, eWindowAlpha, WINDOW_ALPHA_LAST> m_alpha;
+        bool                                                                        m_animatingIn = false;
 
         // For pinned (sticky) windows
         bool m_pinned = false;
@@ -288,9 +285,6 @@ namespace Desktop::View {
 
         // For the noclosefor windowrule
         Time::steady_tp m_closeableSince = Time::steadyNow();
-
-        // Desktop anim controller
-        CWindowAnimationController m_animationController;
 
         // layout-settable flags. These are reset when layout changes.
         struct {
@@ -474,11 +468,10 @@ namespace Desktop::View {
         void                  unmanagedSetGeometry();
 
         // For hidden windows and stuff
-        bool                                                                             m_hidden            = false;
-        bool                                                                             m_suspended         = false;
-        WORKSPACEID                                                                      m_lastWorkspace     = WORKSPACE_INVALID;
-        uint32_t                                                                         m_inputBlockReasons = INPUT_BLOCK_NONE;
-        Desktop::Types::CMultiAVarContainer<float, std::underlying_type_t<eWindowAlpha>> m_alpha;
+        bool        m_hidden            = false;
+        bool        m_suspended         = false;
+        WORKSPACEID m_lastWorkspace     = WORKSPACE_INVALID;
+        uint32_t    m_inputBlockReasons = INPUT_BLOCK_NONE;
     };
 
     inline bool valid(const PHLWINDOW& w) {

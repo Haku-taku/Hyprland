@@ -14,7 +14,7 @@
 #include "../../../../managers/input/InputManager.hpp"
 #include "../../../../pointer/PointerManager.hpp"
 #include "../../../../pointer/PointerController.hpp"
-#include "../../../../animation/WorkspaceAnimationController.hpp"
+#include "../../../../managers/animation/DesktopAnimationManager.hpp"
 #include "../../../../event/EventBus.hpp"
 
 #include <cstdlib>
@@ -1307,8 +1307,8 @@ void CScrollingAlgorithm::updateFullscreenFade(bool coversMonitor) {
     // properly update things on top / bottom
     m_parent->space()->workspace()->setNoMembersAboveFullscreen();
 
-    Animation::Workspace::setFullscreenFadeAnimation(m_parent->space()->workspace(),
-                                                     coversMonitor ? Animation::Workspace::ANIMATION_TYPE_IN : Animation::Workspace::ANIMATION_TYPE_OUT);
+    g_pDesktopAnimationManager->setFullscreenFadeAnimation(m_parent->space()->workspace(),
+                                                           coversMonitor ? CDesktopAnimationManager::ANIMATION_TYPE_IN : CDesktopAnimationManager::ANIMATION_TYPE_OUT);
 }
 
 void CScrollingAlgorithm::clearFullscreenTarget(std::vector<SFullscreenScrollState>& fullscreenTargetList, SP<ITarget> target) {

@@ -31,7 +31,7 @@ void CUnifiedWorkspaceSwipeGesture::begin() {
 
     if (FSMODE == FSMODE_FULLSCREEN) {
         for (auto const& ls : Desktop::focusState()->monitor()->m_layerSurfaceLayers[2]) {
-            *ls->alpha()[Desktop::View::LS_ALPHA_FADE] = 1.F;
+            *ls->m_alpha = 1.f;
         }
     }
 }
@@ -319,7 +319,7 @@ void CUnifiedWorkspaceSwipeGesture::end() {
              (pSwitchedTo->m_space && pSwitchedTo->m_space->algorithm() && pSwitchedTo->m_space->algorithm()->layoutFullscreenCoversMonitor()));
 
         for (auto const& ls : Desktop::focusState()->monitor()->m_layerSurfaceLayers[2]) {
-            *ls->alpha()[Desktop::View::LS_ALPHA_FADE] = HIDE ? 0.F : 1.F;
+            *ls->m_alpha = HIDE ? 0.f : 1.f;
         }
     }
 }
