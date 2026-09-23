@@ -52,8 +52,8 @@ CSessionLockManager::CSessionLockManager() {
 void CSessionLockManager::onNewSessionLock(SP<CSessionLock> pLock) {
     static auto PALLOWRELOCK = CConfigValue<Config::INTEGER>("misc:allow_session_lock_restore");
 
-    if (PROTO::sessionLock->isLocked() && !*PALLOWRELOCK) {
-        LOGM(Log::DEBUG, "Cannot re-lock, misc:allow_session_lock_restore is disabled");
+    if (PROTO::sessionLock->isLocked() && !*PALLOWRELOCK && g_pCompositor->m_startLockedCommand.empty()) {
+        LOG(Log::DEBUG, "Cannot re-lock, misc:allow_session_lock_restore is disabled");
         pLock->sendDenied();
         return;
     }
@@ -61,7 +61,7 @@ void CSessionLockManager::onNewSessionLock(SP<CSessionLock> pLock) {
     if (m_sessionLock && !clientDenied() && !clientLocked())
         return; // Not allowing to relock in case the old lock is still in a limbo
 
-    LOGM(Log::DEBUG, "Session got locked by {:x}", (uintptr_t)pLock.get());
+    LOG(Log::DEBUG, "Session got locked by {:x}", (uintptr_t)pLock.get());
 
     m_sessionLock       = makeUnique<SSessionLock>();
     m_sessionLock->lock = pLock;
@@ -78,6 +78,8 @@ void CSessionLockManager::onNewSessionLock(SP<CSessionLock> pLock) {
     });
 
     m_sessionLock->listeners.unlock = pLock->m_events.unlockAndDestroy.listen([this] {
+        m_events.unlock.emit();
+
         m_sessionLock.reset();
         g_pInputManager->refocus();
 
@@ -92,6 +94,8 @@ void CSessionLockManager::onNewSessionLock(SP<CSessionLock> pLock) {
         for (auto const& m : State::monitorState()->monitors())
             g_pHyprRenderer->damageMonitor(m);
     });
+
+    m_events.lock.emit();
 
     Desktop::focusState()->rawSurfaceFocus(nullptr);
     g_pSeatManager->setGrab(nullptr);
@@ -118,8 +122,8 @@ void CSessionLockManager::onNewSessionLock(SP<CSessionLock> pLock) {
             if (!g_pSessionLockManager->m_sessionLock || !g_pSessionLockManager->m_sessionLock->lock)
                 return;
 
-            LOGM(Log::WARN,
-                 "Sending locked after a 5 second timeout. This happens when we failed to render a lock frame from the client for every output. Lockdead frames may be shown.");
+            LOG(Log::WARN,
+                "Sending locked after a 5 second timeout. This happens when we failed to render a lock frame from the client for every output. Lockdead frames may be shown.");
             g_pSessionLockManager->m_sessionLock->lock->sendLocked();
             g_pSessionLockManager->m_sessionLock->hasSentLocked = true;
         },
@@ -216,15 +220,25 @@ bool CSessionLockManager::clientDenied() {
     return m_sessionLock && m_sessionLock->hasSentDenied;
 }
 
+void CSessionLockManager::clearSessionLock() {
+    m_events.unlock.emit();
+    m_sessionLock = {};
+}
+
 void CSessionLockManager::forceUnlock() {
     PROTO::sessionLock->forceUnlock();
-    m_sessionLock = {};
+    clearSessionLock();
 
     Desktop::focusState()->rawSurfaceFocus(nullptr);
     for (auto const& m : State::monitorState()->monitors())
         g_pHyprRenderer->damageMonitor(m);
 
     g_pInputManager->refocus();
+}
+
+void CSessionLockManager::forceLock() {
+    PROTO::sessionLock->forceLock();
+    m_events.lock.emit();
 }
 
 bool CSessionLockManager::shallConsiderLockMissing() {

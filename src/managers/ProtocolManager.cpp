@@ -49,6 +49,7 @@
 #include "../protocols/SinglePixel.hpp"
 #include "../protocols/SecurityContext.hpp"
 #include "../protocols/CTMControl.hpp"
+#include "../protocols/InputCapture.hpp"
 #include "../protocols/HyprlandSurface.hpp"
 #include "../protocols/ImageCaptureSource.hpp"
 #include "../protocols/ImageCopyCapture.hpp"
@@ -87,6 +88,25 @@
 // * otherwise Hyprland might crash when exiting.                                             *
 // ********************************************************************************************
 
+// Retire the old wl_output global for `name` before a new one takes its map slot.
+// It must NOT be destroyed while clients still hold resources bound to it: destroying
+// them server-side makes each client's in-flight wl_output.release an "invalid object"
+// protocol error, fatally disconnecting every bound client (mass client kill on a fast
+// monitor unplug/replug, e.g. a power blip on an external screen).
+static void retireOutputGlobal(const std::string& name) {
+    if (!PROTO::outputs.contains(name))
+        return;
+
+    auto old = PROTO::outputs.at(name);
+    PROTO::outputs.erase(name);
+
+    if (!old->isDefunct())
+        old->remove();
+
+    if (old->hasBoundResources())
+        PROTO::defunctOutputs.emplace_back(old);
+}
+
 void CProtocolManager::onMonitorModeChange(PHLMONITOR pMonitor) {
     const bool ISMIRROR = pMonitor->isMirror();
 
@@ -97,15 +117,14 @@ void CProtocolManager::onMonitorModeChange(PHLMONITOR pMonitor) {
     if (ISMIRROR && PROTO::outputs.contains(pMonitor->m_name))
         PROTO::outputs.at(pMonitor->m_name)->remove();
     else if (!ISMIRROR && (!PROTO::outputs.contains(pMonitor->m_name) || PROTO::outputs.at(pMonitor->m_name)->isDefunct())) {
-        if (PROTO::outputs.contains(pMonitor->m_name))
-            PROTO::outputs.erase(pMonitor->m_name);
+        retireOutputGlobal(pMonitor->m_name);
         auto p = PROTO::outputs.emplace(pMonitor->m_name,
                                         makeShared<CWLOutputProtocol>(&wl_output_interface, 4, std::format("WLOutput ({})", pMonitor->m_name), pMonitor->m_self.lock()));
         p.first->second->m_self = p.first->second;
     }
 
     if (PROTO::colorManagement && g_pCompositor->shouldChangePreferredImageDescription()) {
-        Log::logger->log(Log::ERR, "FIXME: color management protocol is enabled, need a preferred image description id");
+        LOG(Log::ERR, "FIXME: color management protocol is enabled, need a preferred image description id");
         PROTO::colorManagement->onImagePreferredChanged(0);
     }
 }
@@ -124,8 +143,7 @@ CProtocolManager::CProtocolManager() {
         if (M->isMirror())
             return;
 
-        if (PROTO::outputs.contains(M->m_name))
-            PROTO::outputs.erase(M->m_name);
+        retireOutputGlobal(M->m_name);
 
         auto ref = makeShared<CWLOutputProtocol>(&wl_output_interface, 4, std::format("WLOutput ({})", M->m_name), M->m_self.lock());
         PROTO::outputs.emplace(M->m_name, ref);
@@ -190,6 +208,7 @@ CProtocolManager::CProtocolManager() {
     PROTO::singlePixel         = makeUnique<CSinglePixelProtocol>(&wp_single_pixel_buffer_manager_v1_interface, 1, "SinglePixel");
     PROTO::securityContext     = makeUnique<CSecurityContextProtocol>(&wp_security_context_manager_v1_interface, 1, "SecurityContext");
     PROTO::ctm                 = makeUnique<CHyprlandCTMControlProtocol>(&hyprland_ctm_control_manager_v1_interface, 2, "CTMControl");
+    PROTO::inputCapture        = makeUnique<CInputCaptureProtocol>(&hyprland_input_capture_manager_v1_interface, 2, "InputCapture");
     PROTO::hyprlandSurface     = makeUnique<CHyprlandSurfaceProtocol>(&hyprland_surface_manager_v1_interface, 2, "HyprlandSurface");
     PROTO::contentType         = makeUnique<CContentTypeProtocol>(&wp_content_type_manager_v1_interface, 1, "ContentType");
     PROTO::xdgTag              = makeUnique<CXDGToplevelTagProtocol>(&xdg_toplevel_tag_manager_v1_interface, 1, "XDGTag");
@@ -213,7 +232,7 @@ CProtocolManager::CProtocolManager() {
     PROTO::imageCopyCapture   = makeUnique<CImageCopyCaptureProtocol>(&ext_image_copy_capture_manager_v1_interface, 1, "ImageCopyCapture");
 
     if (*PENABLECM)
-        PROTO::colorManagement = makeUnique<CColorManagementProtocol>(&wp_color_manager_v1_interface, *PCMV1_2 ? 2 : 1, "ColorManagement", *PDEBUGCM);
+        PROTO::colorManagement = makeUnique<CColorManagementProtocol>(&wp_color_manager_v1_interface, *PCMV1_2 ? 3 : 1, "ColorManagement", *PDEBUGCM);
 
     // ! please read the top of this file before adding another protocol
 
@@ -230,9 +249,9 @@ CProtocolManager::CProtocolManager() {
         if (g_pHyprRenderer->explicitSyncSupported() && !PROTO::sync) {
             if (g_pCompositor->supportsDrmSyncobjTimeline()) {
                 PROTO::sync = makeUnique<CDRMSyncobjProtocol>(&wp_linux_drm_syncobj_manager_v1_interface, 1, "DRMSyncobj");
-                Log::logger->log(Log::DEBUG, "DRM Syncobj Timeline support detected, enabling explicit sync protocol");
+                LOG(Log::DEBUG, "DRM Syncobj Timeline support detected, enabling explicit sync protocol");
             } else
-                Log::logger->log(Log::WARN, "DRM Syncobj Timeline not supported, skipping explicit sync protocol");
+                LOG(Log::WARN, "DRM Syncobj Timeline not supported, skipping explicit sync protocol");
         }
     }
 
@@ -240,7 +259,7 @@ CProtocolManager::CProtocolManager() {
         PROTO::mesaDRM  = makeUnique<CMesaDRMProtocol>(&wl_drm_interface, 2, "MesaDRM");
         PROTO::linuxDma = makeUnique<CLinuxDMABufV1Protocol>(&zwp_linux_dmabuf_v1_interface, 5, "LinuxDMABUF");
     } else
-        Log::logger->log(Log::WARN, "ProtocolManager: Not binding linux-dmabuf and MesaDRM: DMABUF not available");
+        LOG(Log::WARN, "ProtocolManager: Not binding linux-dmabuf and MesaDRM: DMABUF not available");
 }
 
 CProtocolManager::~CProtocolManager() {
@@ -248,6 +267,7 @@ CProtocolManager::~CProtocolManager() {
 
     // Output
     PROTO::outputs.clear();
+    PROTO::defunctOutputs.clear();
 
     // Core
     PROTO::seat.reset();
@@ -300,6 +320,7 @@ CProtocolManager::~CProtocolManager() {
     PROTO::singlePixel.reset();
     PROTO::securityContext.reset();
     PROTO::ctm.reset();
+    PROTO::inputCapture.reset();
     PROTO::hyprlandSurface.reset();
     PROTO::contentType.reset();
     PROTO::colorManagement.reset();

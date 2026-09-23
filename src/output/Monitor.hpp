@@ -40,6 +40,7 @@ class CEventLoopTimer;
 namespace Monitor {
     class CMonitorResources;
     class CMonitorFrameScheduler;
+    class COutputCommitCoordinator;
     class CMonitor;
 
     class CMonitorState {
@@ -136,6 +137,7 @@ namespace Monitor {
         PHLMONITORREF                  m_self;
 
         UP<CMonitorFrameScheduler>     m_frameScheduler;
+        UP<COutputCommitCoordinator>   m_commitCoordinator;
 
         // mirroring
         PHLMONITORREF              m_mirrorOf;
@@ -183,18 +185,18 @@ namespace Monitor {
         } m_tearingState;
 
         struct {
-            CSignalT<> commit;
-            CSignalT<> destroy;
-            CSignalT<> connect;
-            CSignalT<> disconnect;
-            CSignalT<> dpmsChanged;
-            CSignalT<> modeChanged;
-            CSignalT<> presented;
+            CSignalT<>                commit;
+            CSignalT<>                destroy;
+            CSignalT<>                connect;
+            CSignalT<>                disconnect;
+            CSignalT<>                dpmsChanged;
+            CSignalT<>                modeChanged;
+            CSignalT<Time::steady_tp> presented;
         } m_events;
 
         std::array<std::vector<PHLLSREF>, 4> m_layerSurfaceLayers;
 
-        // keep in sync with HyprCtl
+        // keep in sync with socket1 output
         enum eDSBlockReason : uint16_t {
             DS_OK = 0,
 
@@ -215,7 +217,7 @@ namespace Monitor {
             DS_CHECKS_COUNT = 14,
         };
 
-        // keep in sync with HyprCtl
+        // keep in sync with socket1 output
         enum eSolitaryCheck : uint32_t {
             SC_OK = 0,
 
@@ -236,11 +238,12 @@ namespace Monitor {
             SC_WORKSPACES   = (1 << 14),
             SC_SURFACES     = (1 << 15),
             SC_ERRORBAR     = (1 << 16),
+            SC_FADEOUT      = (1 << 17),
 
-            SC_CHECKS_COUNT = 17,
+            SC_CHECKS_COUNT = 18,
         };
 
-        // keep in sync with HyprCtl
+        // keep in sync with socket1 output
         enum eTearingCheck : uint8_t {
             TC_OK = 0,
 
@@ -257,38 +260,35 @@ namespace Monitor {
         };
 
         // methods
-        void        onConnect(bool noRule);
-        void        onDisconnect(bool destroy = false);
-        void        applyCMType(NCMType::eCMType cmType, NTransferFunction::eTF cmSdrEotf);
-        void        addDamage(const pixman_region32_t* rg);
-        void        addDamage(const CRegion& rg);
-        void        addDamage(const CBox& box);
-        void        scheduleFrame(Aquamarine::IOutput::scheduleFrameReason reason = Aquamarine::IOutput::AQ_SCHEDULE_CLIENT_UNKNOWN);
-        bool        shouldSkipScheduleFrameOnMouseEvent();
-        void        setMirror(const std::string&);
-        bool        isMirror();
-        float       getDefaultScale();
-        void        changeWorkspace(const PHLWORKSPACE& pWorkspace, bool internal = false, bool noMouseMove = false, bool noFocus = false);
-        void        changeWorkspace(const WORKSPACEID& id, bool internal = false, bool noMouseMove = false, bool noFocus = false);
-        void        setSpecialWorkspace(const PHLWORKSPACE& pWorkspace);
-        void        setSpecialWorkspace(const WORKSPACEID& id);
-        WORKSPACEID activeWorkspaceID();
-        WORKSPACEID activeSpecialWorkspaceID();
-        void        scheduleDone();
-        uint32_t    isSolitaryBlocked(bool full = false);
-        void        recheckSolitary();
-        uint8_t     isTearingBlocked(bool full = false);
-        void        updateSurfaceScaleTransformDetails();
-        bool        updateTearing();
-        uint16_t    isDSBlocked(bool full = false);
-        bool        attemptDirectScanout();
-        void        handleDSleave();
-        bool        canAttemptDirectScanoutFast() const;
-        bool        isMultiGPU();
-        void        setCTM(const Mat3x3& ctm);
-        void        onCursorMovedOnMonitor();
-        void        setDPMS(bool on);
-        bool        shouldUseSoftwareCursors();
+        void         onConnect(bool noRule);
+        void         onDisconnect(bool destroy = false);
+        void         applyCMType(NCMType::eCMType cmType, NTransferFunction::eTF cmSdrEotf);
+        void         addDamage(const pixman_region32_t* rg);
+        void         addDamage(const CRegion& rg);
+        void         addDamage(const CBox& box);
+        void         scheduleFrame(Aquamarine::IOutput::scheduleFrameReason reason = Aquamarine::IOutput::AQ_SCHEDULE_CLIENT_UNKNOWN);
+        bool         shouldSkipScheduleFrameOnMouseEvent();
+        void         setMirror(const std::string&);
+        bool         isMirror();
+        float        getDefaultScale();
+        void         changeWorkspace(const PHLWORKSPACE& pWorkspace, bool internal = false, bool noMouseMove = false, bool noFocus = false);
+        void         setSpecialWorkspace(const PHLWORKSPACE& pWorkspace, bool noFocus = false);
+        PHLWORKSPACE getCurrentWorkspace();
+        void         scheduleDone();
+        uint32_t     isSolitaryBlocked(bool full = false);
+        void         recheckSolitary();
+        uint8_t      isTearingBlocked(bool full = false);
+        void         updateSurfaceScaleTransformDetails();
+        bool         updateTearing();
+        uint16_t     isDSBlocked(bool full = false);
+        bool         attemptDirectScanout();
+        void         handleDSleave();
+        bool         canAttemptDirectScanoutFast() const;
+        bool         isMultiGPU();
+        void         setCTM(const Mat3x3& ctm);
+        void         onCursorMovedOnMonitor();
+        void         setDPMS(bool on);
+        bool         shouldUseSoftwareCursors();
 
         // IMonitorQueryable / IMonitorArrangeable
         virtual MONITORID                   id() const override;
@@ -321,29 +321,25 @@ namespace Monitor {
         bool applyMonitorRuleSoft(Config::CMonitorRule&& pMonitorRule);
 
         //
-        const Mat3x3& getTransformMatrix();
-        const Mat3x3& getScaleMatrix();
+        const Mat3x3&                                               getTransformMatrix();
+        const Mat3x3&                                               getScaleMatrix();
 
-        void          debugLastPresentation(const std::string& message);
+        void                                                        debugLastPresentation(const std::string& message);
 
-        bool          supportsWideColor();
-        bool          supportsHDR();
-        float         minLuminance(float defaultValue = 0);
-        int           maxLuminance(int defaultValue = 80);
-        int           maxAvgLuminance(int defaultValue = 80);
-        float         maxFALL();
-        float         maxCLL();
+        bool                                                        supportsWideColor();
+        bool                                                        supportsHDR();
+        float                                                       minLuminance(float defaultValue = 0);
+        int                                                         maxLuminance(int defaultValue = 80);
+        int                                                         maxAvgLuminance(int defaultValue = 80);
+        float                                                       maxFALL();
+        float                                                       maxCLL();
 
-        bool          wantsWideColor();
-        bool          wantsHDR();
+        bool                                                        wantsWideColor();
+        bool                                                        wantsHDR();
 
-        bool          inHDR();
-        bool          gammaRampsInUse();
+        bool                                                        inHDR();
+        bool                                                        gammaRampsInUse();
 
-        /// Has an active workspace with a real fullscreen window (includes special workspace)
-        bool inFullscreenMode();
-        /// Get fullscreen window from active or special workspace
-        PHLWINDOW                                                   getFullscreenWindow();
         std::optional<NColorManagement::PImageDescription>          getFSImageDescription();
 
         NColorManagement::SPCPRimaries                              getMasteringPrimaries();
@@ -353,26 +349,28 @@ namespace Monitor {
 
         bool                                                        needsCM();
         /// Can do CM without shader (forDSmode ? check output image description : check workbuffer image description)
-        bool                                canNoShaderCM(bool forDSmode = false);
-        bool                                doesNoShaderCM();
+        bool                                                               canNoShaderCM(bool forDSmode = false);
+        bool                                                               doesNoShaderCM();
 
-        bool                                m_enabled             = false;
-        bool                                m_renderingInitPassed = false;
+        bool                                                               m_enabled             = false;
+        bool                                                               m_renderingInitPassed = false;
 
-        PHLWINDOWREF                        m_previousFSWindow;
-        bool                                m_needsHDRupdate = false;
+        PHLWINDOWREF                                                       m_previousFSWindow;
+        bool                                                               m_needsHDRupdate         = false;
+        bool                                                               m_hdrMetadataFromSurface = false;
 
-        std::optional<dev_t>                m_cachedAllocatorDRMDev;
-        std::optional<dev_t>                m_cachedCompositorDRMDev;
-        int                                 m_cachedAllocatorDRMFD  = -1;
-        int                                 m_cachedCompositorDRMFD = -1;
-        std::optional<bool>                 m_cachedSameGPU;
+        std::optional<dev_t>                                               m_cachedAllocatorDRMDev;
+        std::optional<dev_t>                                               m_cachedCompositorDRMDev;
+        int                                                                m_cachedAllocatorDRMFD  = -1;
+        int                                                                m_cachedCompositorDRMFD = -1;
+        std::optional<bool>                                                m_cachedSameGPU;
 
-        NColorManagement::PImageDescription m_imageDescription = NColorManagement::CImageDescription::from(NColorManagement::SImageDescription{});
-        bool                                m_noShaderCTM      = false; // sets drm CTM, restore needed
+        NColorManagement::PImageDescription                                m_imageDescription = NColorManagement::CImageDescription::from(NColorManagement::SImageDescription{});
+        bool                                                               m_noShaderCTM      = false; // sets drm CTM, restore needed
 
-        bool                                m_blurFBDirty        = true;
-        bool                                m_blurFBShouldRender = false;
+        bool                                                               m_blurFBDirty        = true;
+        bool                                                               m_blurFBShouldRender = false;
+        std::vector<std::pair<WP<CWLSurfaceResource>, CHLBufferReference>> m_usedAsyncBuffers;
 
         // For the list lookup
 
@@ -387,25 +385,21 @@ namespace Monitor {
         WP<Monitor::CMonitorResources>      resources();
 
       private:
-        void                    updateMatrix();
-        Mat3x3                  m_projMatrix;
-        Mat3x3                  m_projOutputMatrix;
+        void                updateMatrix();
+        Mat3x3              m_projMatrix;
+        Mat3x3              m_projOutputMatrix;
 
-        void                    setupDefaultWS(const Config::CMonitorRule&);
-        WORKSPACEID             findAvailableDefaultWS();
-        void                    setSpecialWorkspaceVisualState(bool active);
-        void                    commitDPMSState(bool state);
-        void                    scheduleModeRetry();
-        void                    clearModeRetry();
-        void                    updateVCGTRamps();
-        bool                    trySetFormat(std::span<const uint32_t> formats);
+        void                setSpecialWorkspaceVisualState(bool active);
+        void                commitDPMSState(bool state);
+        void                scheduleModeRetry();
+        void                clearModeRetry();
+        void                updateVCGTRamps();
+        bool                trySetFormat(std::span<const uint32_t> formats);
 
-        bool                    m_doneScheduled  = false;
-        bool                    m_vcgtRampsSet   = false;
-        int                     m_modeRetryCount = 0;
-        SP<CEventLoopTimer>     m_modeRetryTimer;
-
-        std::stack<WORKSPACEID> m_prevWorkSpaces;
+        bool                m_doneScheduled  = false;
+        bool                m_vcgtRampsSet   = false;
+        int                 m_modeRetryCount = 0;
+        SP<CEventLoopTimer> m_modeRetryTimer;
 
         // Resources
         UP<Monitor::CMonitorResources> m_resources;
@@ -420,6 +414,7 @@ namespace Monitor {
             CHyprSignalListener needsFrame;
             CHyprSignalListener presented;
             CHyprSignalListener commit;
+            CHyprSignalListener commitResult;
         } m_listeners;
 
         int   m_supportsWideColor = 0;

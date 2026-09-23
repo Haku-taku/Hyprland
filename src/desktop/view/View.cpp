@@ -17,7 +17,7 @@ IView::~IView() {
     if (!m_initialized)
         return;
 
-    Event::bus()->m_events.view.destroy.emit({.view = m_self, .type = m_type, .address = m_address});
+    Event::bus()->m_events.view.destroy.emit({.view = m_self, .type = m_type});
 }
 
 void IView::initView(WP<IView> self, eViewType type) {
@@ -36,15 +36,4 @@ void IView::initView(WP<IView> self, eViewType type) {
 
 SP<CWLSurfaceResource> IView::resource() const {
     return m_wlSurface ? m_wlSurface->resource() : nullptr;
-}
-
-bool IView::aliveAndVisible() const {
-    auto res = resource();
-    if (!res)
-        return false;
-
-    if (!res->m_mapped)
-        return false;
-
-    return visible();
 }

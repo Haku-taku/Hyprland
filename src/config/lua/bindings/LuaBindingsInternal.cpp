@@ -3,6 +3,8 @@
 #include "../../../desktop/rule/windowRule/WindowRule.hpp"
 #include "../../../state/MonitorState.hpp"
 #include "../../../state/WorkspaceState.hpp"
+#include "../../../state/workspace/Resolver.hpp"
+#include "../../../workspace/query/Query.hpp"
 
 using namespace Config;
 using namespace Config::Lua;
@@ -85,14 +87,23 @@ PHLWORKSPACE Internal::workspaceFromLuaSelectorOrObject(lua_State* L, int idx, c
 
     if (auto* ref = sc<PHLWORKSPACEREF*>(luaL_testudata(L, idx, LUA_WORKSPACE_MT)); ref) {
         auto ws = ref->lock();
-        if (!ws || ws->inert())
+        if (!ws)
             return nullptr;
 
         return ws;
     }
 
-    if (lua_isstring(L, idx) || lua_isnumber(L, idx))
-        return State::workspaceState()->query().string(argStr(L, idx)).run();
+    if (lua_isstring(L, idx) || lua_isnumber(L, idx)) {
+        const auto TARGET = State::Workspace::resolver()->getWorkspaceTargetFromString(argStr(L, idx));
+        if (!TARGET.valid())
+            return nullptr;
+
+        auto ws = State::Workspace::state()->find(TARGET);
+        if (!ws)
+            return nullptr;
+
+        return ws;
+    }
 
     Internal::configError(L, "{}: expected a workspace object or selector", fnName);
     return nullptr;
@@ -184,12 +195,12 @@ std::optional<std::string> Internal::workspaceSelectorFromLuaSelectorOrObject(lu
 
     if (auto* ref = sc<PHLWORKSPACEREF*>(luaL_testudata(L, idx, LUA_WORKSPACE_MT)); ref) {
         const auto ws = ref->lock();
-        if (!ws || ws->inert()) {
+        if (!ws) {
             Internal::configError(L, "{}: workspace object is expired", fnName);
             return std::nullopt;
         }
 
-        return std::to_string(ws->m_id);
+        return Workspace::selector(*ws);
     }
 
     if (lua_isstring(L, idx) || lua_isnumber(L, idx))
@@ -343,7 +354,7 @@ static auto logLevelForActionError(CA::eActionErrorLevel level) {
 }
 
 void Internal::reportError(lua_State* L, const CA::SActionError& e) {
-    Log::logger->log(logLevelForActionError(e.level), "Lua {} ({}): {}", CA::toString(e.level), CA::toString(e.code), e.message);
+    LOG(logLevelForActionError(e.level), "Lua {} ({}): {}", CA::toString(e.level), CA::toString(e.code), e.message);
 
     if (auto mgr = Config::Lua::mgr(); mgr) {
         mgr->addEvalIssue(e);
@@ -387,15 +398,15 @@ int Internal::checkResult(lua_State* L, const CA::ActionResult& r) {
 }
 
 PHLWORKSPACE Internal::resolveWorkspaceStr(const std::string& args) {
-    const auto& [id, name, isAutoID] = getWorkspaceIDNameFromString(args);
-    if (id == WORKSPACE_INVALID)
+    const auto TARGET = State::Workspace::resolver()->getWorkspaceTargetFromString(args);
+    if (!TARGET.valid())
         return nullptr;
 
-    auto ws = State::workspaceState()->query().id(id).run();
+    auto ws = State::Workspace::state()->find(TARGET);
     if (!ws) {
         const auto PMONITOR = Desktop::focusState()->monitor();
         if (PMONITOR)
-            ws = State::workspaceState()->create(id, PMONITOR->m_id, name, false);
+            ws = State::Workspace::state()->create(TARGET, PMONITOR, false);
     }
 
     return ws;

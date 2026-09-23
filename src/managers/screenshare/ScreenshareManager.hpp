@@ -13,10 +13,10 @@ class CWLPointerResource;
 
 namespace Screenshare {
     enum eScreenshareType : uint8_t {
+        SHARE_NONE,
         SHARE_MONITOR,
         SHARE_WINDOW,
         SHARE_REGION,
-        SHARE_NONE
     };
 
     enum eScreenshareError : uint8_t {
@@ -174,6 +174,7 @@ namespace Screenshare {
         Vector2D                m_bufferSize = Vector2D(0, 0);
         CRegion                 m_damage; // damage in buffer coords
         bool                    m_shared = false, m_copied = false, m_failed = false;
+        bool                    m_copyInFlight  = false; // a dmabuf copy is issued and waiting on its fence
         bool                    m_overlayCursor = true;
         bool                    m_isFirst       = false;
 
@@ -205,6 +206,7 @@ namespace Screenshare {
             uint32_t regionSessions       = 0;
             uint32_t pendingMonitorFrames = 0;
             uint32_t pendingRegionFrames  = 0;
+            uint32_t pendingWindowFrames  = 0;
 
             bool     needsCopyFB() const {
                 return pendingFrames > 0;
@@ -247,7 +249,7 @@ namespace Screenshare {
     inline UP<CScreenshareManager>& mgr() {
         static UP<CScreenshareManager> manager = nullptr;
         if (!manager && g_pHyprRenderer) {
-            Log::logger->log(Log::DEBUG, "Starting ScreenshareManager");
+            LOG(Log::DEBUG, "Starting ScreenshareManager");
             manager = makeUnique<CScreenshareManager>();
         }
         return manager;

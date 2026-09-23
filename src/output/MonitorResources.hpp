@@ -13,6 +13,7 @@ namespace Monitor {
         CMonitorResources(WP<CMonitor> monitor, DRMFormat format, Vector2D size, NColorManagement::PImageDescription imageDescription);
 
         SP<Render::IFramebuffer> getUnusedWorkBuffer();
+        SP<Render::IFramebuffer> getUnusedWorkBuffer(const Vector2D& size);
         void                     forEachUnusedFB(std::function<void(SP<Render::IFramebuffer>)> callback, bool includeNamed = false);
         bool                     hasMirrorFB() const;
         bool                     shouldKeepMirrorFB() const;
@@ -26,6 +27,7 @@ namespace Monitor {
         void                     disableMirror();
         SP<Render::IFramebuffer> mirrorFB();
         SP<Render::ITexture>     getMirrorTexture();
+        void                     refreshBlurFB();
         SP<Render::ITexture>     m_mirrorTex;
 
         SP<Render::ITexture>     m_stencilTex; // TODO fix blur ignore alpha and remove
@@ -52,6 +54,7 @@ namespace Monitor {
         bool                                m_mirrorFBNeedsFullRefresh = true;
 
         std::vector<SResource>              m_workBuffers;
+        std::vector<SResource>              m_sizedWorkBuffers;
 
         friend class CMonitor;
     };

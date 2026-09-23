@@ -17,7 +17,7 @@
 #include <variant>
 
 namespace Desktop {
-    enum eFocusReason : uint8_t;
+    enum eFocusReason : uint32_t;
 }
 namespace Event {
     struct SCallbackInfo {
@@ -26,8 +26,7 @@ namespace Event {
 
     struct SViewDestroyEvent {
         PHLVIEWREF               view;
-        Desktop::View::eViewType type    = Desktop::View::VIEW_TYPE_WINDOW;
-        uintptr_t                address = 0;
+        Desktop::View::eViewType type = Desktop::View::VIEW_TYPE_WINDOW;
     };
 
     class CEventBus {
@@ -78,6 +77,7 @@ namespace Event {
                 Event<PHLWINDOW>                        create;
                 Event<PHLWINDOW>                        open;
                 Event<PHLWINDOW>                        openEarly;
+                Event<PHLWINDOW>                        openLate;
                 Event<PHLWINDOWREF>                     destroy;
                 Event<PHLWINDOW>                        close;
                 Event<PHLWINDOW>                        kill;
@@ -87,9 +87,11 @@ namespace Event {
                 Event<PHLWINDOW>                        class_;
                 Event<PHLWINDOW>                        pin;
                 Event<PHLWINDOW>                        fullscreen;
+                Event<PHLWINDOW, bool>                  minimize;
                 Event<PHLWINDOW>                        floating;
                 Event<PHLWINDOW>                        updateRules;
                 Event<PHLWINDOW, PHLWORKSPACE>          moveToWorkspace;
+                Cancellable<PHLWINDOW>                  bell;
             } window;
 
             struct {
@@ -175,6 +177,7 @@ namespace Event {
                 Event<PHLWORKSPACE, PHLMONITOR> specialActive;
                 Event<PHLWORKSPACEREF>          created;
                 Event<PHLWORKSPACEREF>          removed;
+                Event<PHLWORKSPACEREF>          renamed;
             } workspace;
 
             struct {

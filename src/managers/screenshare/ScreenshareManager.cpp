@@ -1,7 +1,7 @@
 #include "ScreenshareManager.hpp"
 #include "../../render/Renderer.hpp"
 #include "../../Compositor.hpp"
-#include "../../desktop/view/Window.hpp"
+#include "../../desktop/view/window/Window.hpp"
 #include "../../protocols/core/Seat.hpp"
 #include "../../state/MonitorState.hpp"
 
@@ -33,7 +33,7 @@ void CScreenshareManager::onOutputCommit(PHLMONITOR monitor) {
             return;
 
         if (frame->m_session->m_type == SHARE_WINDOW) {
-            CBox geometry = {frame->m_session->m_window->m_realPosition->value(), frame->m_session->m_window->m_realSize->value()};
+            CBox geometry = frame->m_session->m_window->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
             if (geometry.intersection({monitor->m_position, monitor->m_size}).empty())
                 return;
         }
@@ -41,12 +41,12 @@ void CScreenshareManager::onOutputCommit(PHLMONITOR monitor) {
         frame->copy();
     });
 
-    std::erase_if(m_pendingFrames, [&](const WP<CScreenshareFrame>& frame) { return frame.expired(); });
+    std::erase_if(m_pendingFrames, [&](const WP<CScreenshareFrame>& frame) { return frame.expired() || frame->done(); });
 }
 
 UP<CScreenshareSession> CScreenshareManager::newSession(wl_client* client, PHLMONITOR monitor) {
     if UNLIKELY (!monitor || !State::monitorState()->contains(monitor)) {
-        LOGM(Log::ERR, "Client requested sharing of a monitor that is gone");
+        LOG(Log::ERR, "Client requested sharing of a monitor that is gone");
         return nullptr;
     }
 
@@ -60,7 +60,7 @@ UP<CScreenshareSession> CScreenshareManager::newSession(wl_client* client, PHLMO
 
 UP<CScreenshareSession> CScreenshareManager::newSession(wl_client* client, PHLMONITOR monitor, CBox captureRegion) {
     if UNLIKELY (!monitor || !State::monitorState()->contains(monitor)) {
-        LOGM(Log::ERR, "Client requested sharing of a monitor that is gone");
+        LOG(Log::ERR, "Client requested sharing of a monitor that is gone");
         return nullptr;
     }
 
@@ -73,8 +73,8 @@ UP<CScreenshareSession> CScreenshareManager::newSession(wl_client* client, PHLMO
 }
 
 UP<CScreenshareSession> CScreenshareManager::newSession(wl_client* client, PHLWINDOW window) {
-    if UNLIKELY (!window || !window->m_isMapped) {
-        LOGM(Log::ERR, "Client requested sharing of window that is gone or not shareable!");
+    if UNLIKELY (!window || !window->mapped()) {
+        LOG(Log::ERR, "Client requested sharing of window that is gone or not shareable!");
         return nullptr;
     }
 
@@ -194,6 +194,9 @@ CScreenshareManager::SOutputCopyFBState CScreenshareManager::outputCopyFBState(P
         } else if (frame->m_session->m_type == SHARE_REGION) {
             state.pendingFrames++;
             state.pendingRegionFrames++;
+        } else if (frame->m_session->m_type == SHARE_WINDOW) {
+            state.pendingFrames++;
+            state.pendingWindowFrames++;
         }
     }
 

@@ -19,10 +19,11 @@ enum eWrapMode : uint8_t {
 };
 
 struct SMotionBlurData {
-    bool     enabled  = false;
-    CBox     previous = {};
-    CBox     current  = {};
-    CBox     source   = {};
+    bool     enabled         = false;
+    CBox     previous        = {};
+    CBox     current         = {};
+    CBox     source          = {};
+    Vector2D sourceTexOrigin = {};
     Vector2D sourceTexSize;
     int      samples = 1;
 
@@ -38,15 +39,16 @@ class CTexPassElement : public IPassElement {
         float                  blurA    = 1.F;
         float                  overallA = 1.F;
         CRegion                damage;
-        int                    round               = 0;
-        float                  roundingPower       = 2.0f;
-        bool                   flipEndFrame        = false;
-        bool                   useMirrorProjection = false;
+        bool                   useProvidedDamage = false;
+        int                    round             = 0;
+        float                  roundingPower     = 2.0f;
         CBox                   clipBox;
         bool                   blur           = false;
         bool                   forceBlurBlend = false;
+        std::optional<CBox>    blurPatternBox;
         std::optional<float>   ignoreAlpha;
         std::optional<bool>    blockBlurOptimization;
+        std::optional<bool>    liveBlurOverride;
         bool                   cmBackToSRGB = false;
 
         bool                   discardActive = false;
@@ -61,11 +63,12 @@ class CTexPassElement : public IPassElement {
 
         CRegion                clipRegion;
         PHLLSREF               currentLS;
+        PHLWINDOWREF           blurOwner;
 
         SP<Render::ITexture>   blurredBG;
         SP<Render::ITexture>   blurAlphaMatte;
-
         SMotionBlurData        motionBlur;
+        bool                   blurShapeInvalid = false;
     };
 
     CTexPassElement(const SRenderData& data);
@@ -78,6 +81,8 @@ class CTexPassElement : public IPassElement {
     virtual CRegion             opaqueRegion();
     virtual void                discard();
 
+    bool                        usesLiveBlur();
+
     virtual const char*         passName() {
         return "CTexPassElement";
     }
@@ -87,4 +92,7 @@ class CTexPassElement : public IPassElement {
     };
 
     SRenderData m_data;
+
+  private:
+    std::optional<bool> m_usesLiveBlur;
 };

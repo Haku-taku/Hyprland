@@ -1,10 +1,11 @@
 #include "WindowQuery.hpp"
 #include "WindowState.hpp"
-#include "../Workspace.hpp"
+#include "../../workspace/HLWorkspace.hpp"
 #include "../history/WindowHistoryTracker.hpp"
-#include "../view/Window.hpp"
+#include "../view/window/Window.hpp"
 #include "../../config/ConfigValue.hpp"
 #include "../../output/Monitor.hpp"
+#include "../../managers/fullscreen/FullscreenController.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -31,7 +32,7 @@ PHLWINDOW CWindowQuery::inDirection(PHLWINDOW window, Math::eDirection direction
     if (!PMONITOR)
         return nullptr; // ??
 
-    const auto WINDOWIDEALBB = window->isFullscreen() ? CBox{PMONITOR->m_position, PMONITOR->m_size} : window->getWindowIdealBoundingBoxIgnoreReserved();
+    const auto WINDOWIDEALBB = Fullscreen::controller()->isFullscreen(window) ? CBox{PMONITOR->m_position, PMONITOR->m_size} : window->getWindowIdealBoundingBoxIgnoreReserved();
     const auto PWORKSPACE    = window->m_workspace;
 
     if (!PWORKSPACE)
@@ -40,9 +41,9 @@ PHLWINDOW CWindowQuery::inDirection(PHLWINDOW window, Math::eDirection direction
     return inDirection({.origin             = WINDOWIDEALBB,
                         .workspace          = PWORKSPACE,
                         .direction          = direction,
-                        .floatingPreference = window->m_isFloating,
+                        .floatingPreference = window->isFloating(),
                         .ignoreWindow       = window,
-                        .useVectorAngles    = window->m_isFloating});
+                        .useVectorAngles    = window->isFloating()});
 }
 
 PHLWINDOW CWindowQuery::inDirection(const SWindowDirectionQuery& query) const {
@@ -95,25 +96,38 @@ PHLWINDOW CWindowQuery::inDirection(const SWindowDirectionQuery& query) const {
 
         auto find = [&]() {
             for (auto const& w : m_state.windows()) {
-                if (w == query.ignoreWindow || !w->m_workspace || !w->m_isMapped || (!w->isFullscreen() && w->m_isFloating) || !w->m_workspace->isVisible())
+                if (w == query.ignoreWindow || !w->m_workspace || !w->mapped() || (!Fullscreen::controller()->isFullscreen(w) && w->isFloating()) || !w->m_workspace->visible())
                     continue;
 
                 if (w->isHidden())
                     continue;
 
-                if (w->hasInputBlockedReasonsBesides(INPUT_BLOCK_BELOW_FULLSCREEN))
+                if (w->hasInputBlockedReasonsBesides(FOCUS_BLOCK_BELOW_FULLSCREEN))
                     continue;
 
                 if (query.workspace->m_monitor == w->m_monitor && query.workspace != w->m_workspace)
                     continue;
 
-                if (query.workspace->m_hasFullscreenWindow && !w->isAllowedOverFullscreen())
+                // Because we can't blanket ban finding window in direction if workspace has fullscreen, we need to only seek window if config options allow focus to wander away from FSed window
+                if ((Fullscreen::controller()->hasFullscreen(query.workspace)) && !w->isAllowedOverFullscreen()) {
+                    if (!Fullscreen::controller()->layoutManagedFS(Fullscreen::controller()->getFullscreenWindow(query.workspace)))
+                        continue;
+                    // Let layout handled fullscreens not block seeking window in direction
+                    static auto PONFOCUSUNDERFS = CConfigValue<Config::INTEGER>("misc:on_focus_under_fullscreen");
+                    static auto PFULLCYCLE      = CConfigValue<Config::BOOL>("binds:movefocus_cycles_fullscreen");
+                    if (!(*PFULLCYCLE) || *PONFOCUSUNDERFS == 0)
+                        continue;
+                }
+
+                if ((Fullscreen::controller()->hasFullscreen(query.workspace) &&
+                     !Fullscreen::controller()->layoutManagedFS(Fullscreen::controller()->getFullscreenWindow(query.workspace))) &&
+                    !w->isAllowedOverFullscreen())
                     continue;
 
                 if (!*PMONITORFALLBACK && query.workspace->m_monitor != w->m_monitor)
                     continue;
 
-                if ((!w->isFullscreen() && w->m_isFloating) != floatingPreference)
+                if ((!Fullscreen::controller()->isFullscreen(w) && w->isFloating()) != floatingPreference)
                     continue;
 
                 // prioritize windows on the same workspace.
@@ -206,13 +220,14 @@ PHLWINDOW CWindowQuery::inDirection(const SWindowDirectionQuery& query) const {
         constexpr float THRESHOLD    = 0.3 * M_PI;
 
         for (auto const& w : m_state.windows()) {
-            if (w == query.ignoreWindow || !w->m_isMapped || !w->m_workspace || !w->acceptsInput() || (!w->isFullscreen() && !w->m_isFloating) || !w->m_workspace->isVisible())
+            if (w == query.ignoreWindow || !w->mapped() || !w->m_workspace || !w->acceptsInput() || (!Fullscreen::controller()->isFullscreen(w) && !w->isFloating()) ||
+                !w->m_workspace->visible())
                 continue;
 
             if (query.workspace->m_monitor == w->m_monitor && query.workspace != w->m_workspace)
                 continue;
 
-            if (query.workspace->m_hasFullscreenWindow && !w->isAllowedOverFullscreen())
+            if (Fullscreen::controller()->hasFullscreen(query.workspace) && !w->isAllowedOverFullscreen())
                 continue;
 
             if (!*PMONITORFALLBACK && query.workspace->m_monitor != w->m_monitor)
@@ -231,8 +246,8 @@ PHLWINDOW CWindowQuery::inDirection(const SWindowDirectionQuery& query) const {
             }
         }
 
-        if (!leaderWindow && query.workspace->m_hasFullscreenWindow)
-            leaderWindow = query.workspace->getFullscreenWindow();
+        if (!leaderWindow && Fullscreen::controller()->hasFullscreen(query.workspace))
+            leaderWindow = Fullscreen::controller()->getFullscreenWindow(query.workspace);
     }
 
     if (leaderValue != -1)
@@ -243,12 +258,12 @@ PHLWINDOW CWindowQuery::inDirection(const SWindowDirectionQuery& query) const {
 
 template <typename WINDOWPTR>
 static bool isWorkspaceMatches(WINDOWPTR pWindow, const WINDOWPTR w, bool anyWorkspace) {
-    return anyWorkspace ? w->m_workspace && w->m_workspace->isVisible() : w->m_workspace == pWindow->m_workspace;
+    return anyWorkspace ? w->m_workspace && w->m_workspace->visible() : w->m_workspace == pWindow->m_workspace;
 }
 
 template <typename WINDOWPTR>
 static bool isFloatingMatches(WINDOWPTR w, std::optional<bool> floating) {
-    return !floating.has_value() || w->m_isFloating == floating.value();
+    return !floating.has_value() || w->isFloating() == floating.value();
 }
 
 template <typename WINDOWPTR>
@@ -256,13 +271,13 @@ static bool acceptsInputForCycle(WINDOWPTR w, bool allowFullscreenBlocked) {
     if (w->acceptsInput())
         return true;
 
-    return allowFullscreenBlocked && !w->isHidden() && w->noInputBlockedReasonsBesides(INPUT_BLOCK_BELOW_FULLSCREEN);
+    return allowFullscreenBlocked && !w->isHidden() && w->noInputBlockedReasonsBesides(FOCUS_BLOCK_BELOW_FULLSCREEN);
 }
 
 template <typename WINDOWPTR>
 static bool isWindowAvailableForCycle(WINDOWPTR pWindow, WINDOWPTR w, const SWindowCycleOptions& options) {
     return isFloatingMatches(w, options.floating) &&
-        (w != pWindow && isWorkspaceMatches(pWindow, w, options.visible) && w->m_isMapped && acceptsInputForCycle(w, options.allowFullscreenBlocked) &&
+        (w != pWindow && isWorkspaceMatches(pWindow, w, options.visible) && w->mapped() && acceptsInputForCycle(w, options.allowFullscreenBlocked) &&
          (!options.focusableOnly || !w->m_ruleApplicator->noFocus().valueOrDefault()));
 }
 

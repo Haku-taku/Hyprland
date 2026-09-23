@@ -1,7 +1,9 @@
 #include "WindowState.hpp"
 #include "../../event/EventBus.hpp"
 #include "../../render/Renderer.hpp"
-#include "../view/Window.hpp"
+#include "../view/window/Window.hpp"
+#include "../view/window/WindowFullscreenPolicy.hpp"
+#include "../view/window/WindowPresentation.hpp"
 
 #include <algorithm>
 #include <ranges>
@@ -15,13 +17,6 @@ CWindowState::CWindowState() {
             return;
 
         m_windows.emplace_back(WINDOW);
-    });
-
-    m_listeners.viewDestroy = Event::bus()->m_events.view.destroy.listen([this](const Event::SViewDestroyEvent& event) {
-        if (event.type != View::VIEW_TYPE_WINDOW)
-            return;
-
-        std::erase_if(m_windows, [&](auto& x) { return !x || rc<uintptr_t>(x.get()) == event.address; });
     });
 }
 
@@ -37,6 +32,14 @@ CWindowQuery CWindowState::query() const {
     return CWindowQuery{*this};
 }
 
+bool CWindowState::groupsLocked() const {
+    return m_groupsLocked;
+}
+
+void CWindowState::setGroupsLocked(bool locked) {
+    m_groupsLocked = locked;
+}
+
 void CWindowState::raise(PHLWINDOW w) {
     moveToZ(w, true);
 }
@@ -49,9 +52,9 @@ void CWindowState::moveToZ(PHLWINDOW w, bool top) {
     if (!View::validMapped(w) || m_windows.empty())
         return;
 
-    w->m_createdOverFullscreen = top;
+    w->fullscreenPolicy().setAllowedOverFullscreen(top);
     w->updateFullscreenInputState();
-    *w->alpha(View::WINDOW_ALPHA_FULLSCREEN) = w->isBlockedByFullscreen() ? 0.F : 1.F;
+    *w->presentation().alpha(View::WINDOW_ALPHA_FULLSCREEN) = w->isBlockedByFullscreen() ? 0.F : 1.F;
 
     if (w == (top ? m_windows.back() : m_windows.front()))
         return;
@@ -62,11 +65,11 @@ void CWindowState::moveToZ(PHLWINDOW w, bool top) {
         else
             moveToBottom(pw);
 
-        if (pw->m_isMapped)
+        if (pw->mapped())
             g_pHyprRenderer->damageMonitor(pw->m_monitor.lock());
     };
 
-    if (!w->m_isX11) {
+    if (!w->backend().isX11()) {
         moveSingleToZ(w);
         return;
     }
@@ -81,7 +84,8 @@ void CWindowState::moveToZ(PHLWINDOW w, bool top) {
             toMove.insert(toMove.begin(), pw);
 
         for (auto const& other : m_windows) {
-            if (other->m_isMapped && !other->isHidden() && other->m_isX11 && other->x11Parent() == pw && other != pw && std::ranges::find(toMove, other) == toMove.end())
+            if (other->mapped() && !other->isHidden() && other->backend().isX11() && other->backend().parent() == pw && other != pw &&
+                std::ranges::find(toMove, other) == toMove.end())
                 collectX11Stack(other, collectX11Stack);
         }
     };

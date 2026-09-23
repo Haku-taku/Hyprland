@@ -1,7 +1,7 @@
 #include "SurfacePassElement.hpp"
 #include "../OpenGL.hpp"
 #include "../../desktop/view/WLSurface.hpp"
-#include "../../desktop/view/Window.hpp"
+#include "../../desktop/view/window/Window.hpp"
 #include "../../protocols/core/Compositor.hpp"
 #include "../../protocols/DRMSyncobj.hpp"
 #include "../../managers/input/InputManager.hpp"
@@ -37,13 +37,14 @@ CBox CSurfacePassElement::getTexBox() {
         if (PSURFACE && !PSURFACE->m_fillIgnoreSmall && PSURFACE->small() /* guarantees PWINDOW */) {
             const auto CORRECT  = PSURFACE->correctSmallVec();
             const auto SIZE     = PSURFACE->getViewporterCorrectedSize();
-            const auto REPORTED = PWINDOW->getReportedSize();
+            const auto REPORTED = PWINDOW->backend().reportedSize();
 
             if (!INTERACTIVERESIZEINPROGRESS) {
                 windowBox.translate(CORRECT);
 
-                windowBox.width  = SIZE.x * (PWINDOW->m_realSize->value().x / REPORTED.x);
-                windowBox.height = SIZE.y * (PWINDOW->m_realSize->value().y / REPORTED.y);
+                const auto REALSIZE = PWINDOW->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+                windowBox.width     = SIZE.x * (REALSIZE.x / REPORTED.x);
+                windowBox.height    = SIZE.y * (REALSIZE.y / REPORTED.y);
             } else {
                 windowBox.width  = SIZE.x;
                 windowBox.height = SIZE.y;
@@ -55,12 +56,13 @@ CBox CSurfacePassElement::getTexBox() {
 
         windowBox = {sc<int>(outputX) + m_data.pos.x + m_data.localPos.x, sc<int>(outputY) + m_data.pos.y + m_data.localPos.y, std::max(sc<float>(SURFSIZE.x), 2.F),
                      std::max(sc<float>(SURFSIZE.y), 2.F)};
-        if (m_data.pWindow && m_data.pWindow->m_realSize->isBeingAnimated() && m_data.surface && !m_data.mainSurface && m_data.squishOversized /* subsurface */) {
+        if (m_data.pWindow && m_data.pWindow->sizeAnimation()->isBeingAnimated() && m_data.surface && !m_data.mainSurface && m_data.squishOversized /* subsurface */) {
             // adjust subsurfaces to the window
-            const auto REPORTED = m_data.pWindow->getReportedSize();
+            const auto REPORTED = m_data.pWindow->backend().reportedSize();
             if (REPORTED.x != 0 && REPORTED.y != 0) {
-                windowBox.width  = (windowBox.width / REPORTED.x) * m_data.pWindow->m_realSize->value().x;
-                windowBox.height = (windowBox.height / REPORTED.y) * m_data.pWindow->m_realSize->value().y;
+                const auto REALSIZE = m_data.pWindow->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+                windowBox.width     = (windowBox.width / REPORTED.x) * REALSIZE.x;
+                windowBox.height    = (windowBox.height / REPORTED.y) * REALSIZE.y;
             }
         }
     }
@@ -178,7 +180,7 @@ CRegion CSurfacePassElement::visibleRegion(bool& cancel) {
 
 void CSurfacePassElement::discard() {
     if (!g_pHyprRenderer->m_bBlockSurfaceFeedback) {
-        Log::logger->log(Log::TRACE, "discard for invisible surface");
+        LOG(Log::TRACE, "discard for invisible surface");
         m_data.surface->presentFeedback(m_data.when, m_data.pMonitor->m_self.lock(), true);
     }
 }

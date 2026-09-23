@@ -6,9 +6,9 @@
 
 #include "helpers/math/Direction.hpp"
 #include "managers/XWaylandManager.hpp"
-#include "managers/KeybindManager.hpp"
+#include "keybinds/Manager.hpp"
 #include "managers/SessionLockManager.hpp"
-#include "desktop/view/Window.hpp"
+#include "desktop/view/window/Window.hpp"
 #include "desktop/state/FadingOutState.hpp"
 #include "desktop/state/LayerState.hpp"
 #include "desktop/state/OtherViewState.hpp"
@@ -46,6 +46,7 @@ class CCompositor {
 
     bool                     m_initialized = false;
     bool                     m_safeMode    = false;
+    bool                     m_startLocked = false;
     SP<Aquamarine::CBackend> m_aqBackend;
 
     std::string              m_hyprTempDataRoot = "";
@@ -55,6 +56,8 @@ class CCompositor {
     std::string              m_instancePath      = "";
     std::string              m_currentSplash     = "error";
 
+    std::string              m_startLockedCommand = "";
+
     void                     initServer(std::string socketName, int socketFd);
     void                     startCompositor();
     void                     stopCompositor();
@@ -62,6 +65,7 @@ class CCompositor {
     void                     bumpNofile();
     void                     restoreNofile();
     bool                     setWatchdogFd(int fd);
+    bool                     writeWatchdogFd(std::string);
 
     bool                     m_sessionActive          = true;
     bool                     m_dpmsStateOn            = true;
@@ -70,13 +74,10 @@ class CCompositor {
     bool                     m_desktopEnvSet          = false;
     bool                     m_wantsXwayland          = true;
     bool                     m_onlyConfigVerification = false;
+    bool                     m_sdSessionTarget        = false;
 
     // ------------------------------------------------- //
 
-    void                                setWindowFullscreenInternal(const PHLWINDOW PWINDOW, const eFullscreenMode MODE);
-    void                                setWindowFullscreenClient(const PHLWINDOW PWINDOW, const eFullscreenMode MODE);
-    void                                setWindowFullscreenState(const PHLWINDOW PWINDOW, const Desktop::View::SFullscreenState state);
-    void                                changeWindowFullscreenModeClient(const PHLWINDOW PWINDOW, const eFullscreenMode MODE, const bool ON);
     Vector2D                            parseWindowVectorArgsRelative(const std::string&, const Vector2D&);
     void                                performUserChecks();
     std::optional<unsigned int>         getVTNr();
@@ -103,6 +104,11 @@ class CCompositor {
     wl_event_source*               m_critSigSource  = nullptr;
     rlimit                         m_originalNofile = {};
     Hyprutils::OS::CFileDescriptor m_watchdogWriteFd;
+
+    struct {
+        CHyprSignalListener lock;
+        CHyprSignalListener unlock;
+    } m_listeners;
 };
 
 inline UP<CCompositor> g_pCompositor;

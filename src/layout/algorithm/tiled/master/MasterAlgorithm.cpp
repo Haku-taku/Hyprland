@@ -1,4 +1,6 @@
 #include "MasterAlgorithm.hpp"
+#include "../../../../helpers/MiscFunctions.hpp"
+#include "../../../../desktop/view/window/WindowPresentation.hpp"
 
 #include "../../Algorithm.hpp"
 #include "../../../space/Space.hpp"
@@ -14,6 +16,8 @@
 #include "../../../../Compositor.hpp"
 #include "../../../../render/Renderer.hpp"
 #include "../../../../state/MonitorState.hpp"
+#include "../../../../managers/fullscreen/FullscreenController.hpp"
+#include "../../../../managers/fullscreen/handler/FullscreenHandler.hpp"
 
 #include <hyprutils/utils/ScopeGuard.hpp>
 #include <hyprutils/string/VarList2.hpp>
@@ -62,7 +66,7 @@ void CMasterAlgorithm::addTarget(SP<ITarget> target, bool firstMap) {
     }
 
     const bool BNEWBEFOREACTIVE = *PNEWONACTIVE == "before";
-    const bool BNEWISMASTER     = dragOntoMaster || *PNEWSTATUS == "master";
+    const bool BNEWISMASTER     = dragOntoMaster || (!DRAGMOVE && *PNEWSTATUS == "master");
 
     const auto PNODE = [&]() -> SP<SMasterNodeData> {
         if (*PNEWONACTIVE != "none" && !BNEWISMASTER) {
@@ -96,7 +100,7 @@ void CMasterAlgorithm::addTarget(SP<ITarget> target, bool firstMap) {
     if (*PDROPATCURSOR && DRAGMOVE) {
         if (CENTERED) {
             if (const auto PMASTER = getMasterNode(); PMASTER) {
-                const CBox MBOX = PMASTER->pTarget->position();
+                const auto MBOX = CBox{PMASTER->position, PMASTER->size};
                 if (MOUSECOORDS.x >= MBOX.x && MOUSECOORDS.x <= MBOX.x + MBOX.w)
                     forceDropAsMaster = true;
                 else {
@@ -114,7 +118,7 @@ void CMasterAlgorithm::addTarget(SP<ITarget> target, bool firstMap) {
                         if (nd->isMaster)
                             continue;
                         const bool ndRight = (slavesNo % 2 == 0) == FIRSTSIDERIGHT;
-                        if (ndRight == DROPRIGHT && MOUSECOORDS.y > nd->pTarget->position().middle().y)
+                        if (ndRight == DROPRIGHT && MOUSECOORDS.y > CBox{nd->position, nd->size}.middle().y)
                             ++slot;
                         ++slavesNo;
                     }
@@ -146,7 +150,7 @@ void CMasterAlgorithm::addTarget(SP<ITarget> target, bool firstMap) {
             const std::size_t srcIndex = sc<std::size_t>(std::distance(v.begin(), NODEIT));
 
             for (std::size_t i = 0; i < v.size(); ++i) {
-                const CBox box = v[i]->pTarget->position();
+                const auto box = CBox{v[i]->position, v[i]->size};
                 if (!box.containsPoint(MOUSECOORDS))
                     continue;
 
@@ -187,7 +191,7 @@ void CMasterAlgorithm::addTarget(SP<ITarget> target, bool firstMap) {
             // make it the master only if the cursor is on the master side of the screen
             for (auto const& nd : m_masterNodesData) {
                 if (nd->isMaster) {
-                    const auto MIDDLE = nd->pTarget->position().middle();
+                    const auto MIDDLE = CBox{nd->position, nd->size}.middle();
                     switch (orientation) {
                         case ORIENTATION_LEFT:
                         case ORIENTATION_CENTER:
@@ -272,11 +276,11 @@ void CMasterAlgorithm::removeTarget(SP<ITarget> target) {
 
     const auto  PNODE = getNodeFromTarget(target);
 
-    if (!PNODE)
+    if (!PNODE || !target)
         return;
 
-    if (target->fullscreenMode() != FSMODE_NONE)
-        g_pCompositor->setWindowFullscreenInternal(target->window(), FSMODE_NONE);
+    if (Fullscreen::controller()->isFullscreen(target->window()))
+        Fullscreen::controller()->setFullscreenMode(target->window(), Fullscreen::FSMODE_NONE);
 
     if (PNODE->isMaster && (MASTERSLEFT <= 1 || *SMALLSPLIT == 1)) {
         // find a new master from top of the list
@@ -327,8 +331,8 @@ void CMasterAlgorithm::resizeTarget(const Vector2D& Δ, SP<ITarget> target, eRec
     const bool   DISPLAYTOP    = STICKS(PNODE->position.y, WORKAREA.y);
     const bool   DISPLAYLEFT   = STICKS(PNODE->position.x, WORKAREA.x);
 
-    const bool   LEFT = corner == CORNER_TOPLEFT || corner == CORNER_BOTTOMLEFT;
-    const bool   TOP  = corner == CORNER_TOPLEFT || corner == CORNER_TOPRIGHT;
+    const bool   LEFT = edgeLeft(corner);
+    const bool   TOP  = edgeTop(corner);
     const bool   NONE = corner == CORNER_NONE;
 
     const auto   MASTERS      = getMastersNo();
@@ -484,13 +488,13 @@ void CMasterAlgorithm::moveTargetInDirection(SP<ITarget> t, Math::eDirection dir
     if (!targetWs)
         return;
 
-    t->window()->setAnimationsToMove();
+    t->window()->presentation().setAnimationsToMove();
 
     if (t->window()->m_workspace != targetWs) {
         if (!*PMONITORFALLBACK)
             return; // noop
 
-        t->assignToSpace(targetWs->m_space, focalPointForDir(t, dir));
+        t->assignToSpace(targetWs->space(), focalPointForDir(t, dir));
     } else if (PWINDOW2) {
         // if same monitor, switch windows
         g_layoutManager->switchTargets(t, PWINDOW2->layoutTarget());
@@ -502,6 +506,14 @@ void CMasterAlgorithm::moveTargetInDirection(SP<ITarget> t, Math::eDirection dir
 }
 
 void CMasterAlgorithm::recalculate(eRecalculateReason reason) {
+    if (!m_parent || !m_parent->space())
+        return;
+    // Avoid further pos recalc if in fullscreen
+    if (Fullscreen::controller()->hasFullscreen(m_parent->space()->workspace(), true)) {
+        m_defaultFullscreenHandler->syncTargetSizeAndPosition();
+        return;
+    }
+
     calculateWorkspace();
 }
 
@@ -525,7 +537,7 @@ Config::ErrorResult CMasterAlgorithm::layoutMsg(const std::string_view& sv) {
     const auto stateErr   = [](std::string msg) { return Config::configError(std::move(msg), Config::eConfigErrorLevel::WARNING, Config::eConfigErrorCode::INVALID_STATE); };
 
     if (vars.size() < 1 || vars[0].empty()) {
-        Log::logger->log(Log::ERR, "layoutmsg called without params");
+        LOG(Log::ERR, "layoutmsg called without params");
         return invalidArg("layoutmsg without params");
     }
 
@@ -653,7 +665,7 @@ Config::ErrorResult CMasterAlgorithm::layoutMsg(const std::string_view& sv) {
         const auto PWINDOWTOSWAPWITH = getNextTarget(PWINDOW->layoutTarget(), true, !NOLOOP);
 
         if (PWINDOWTOSWAPWITH) {
-            g_pCompositor->setWindowFullscreenInternal(PWINDOW, FSMODE_NONE);
+            Fullscreen::controller()->setFullscreenMode(PWINDOW, Fullscreen::FSMODE_NONE);
             g_layoutManager->switchTargets(PWINDOW->layoutTarget(), PWINDOWTOSWAPWITH);
             switchToWindow(PWINDOW->layoutTarget());
         }
@@ -670,7 +682,7 @@ Config::ErrorResult CMasterAlgorithm::layoutMsg(const std::string_view& sv) {
         const auto PWINDOWTOSWAPWITH = getNextTarget(PWINDOW->layoutTarget(), false, !NOLOOP);
 
         if (PWINDOWTOSWAPWITH) {
-            g_pCompositor->setWindowFullscreenInternal(PWINDOW, FSMODE_NONE);
+            Fullscreen::controller()->setFullscreenMode(PWINDOW, Fullscreen::FSMODE_NONE);
             g_layoutManager->switchTargets(PWINDOW->layoutTarget(), PWINDOWTOSWAPWITH);
             switchToWindow(PWINDOW->layoutTarget());
         }
@@ -690,7 +702,7 @@ Config::ErrorResult CMasterAlgorithm::layoutMsg(const std::string_view& sv) {
         if (MASTERS + 2 > WINDOWS && *SMALLSPLIT == 0)
             return stateErr("nothing to do");
 
-        g_pCompositor->setWindowFullscreenInternal(PWINDOW, FSMODE_NONE);
+        Fullscreen::controller()->setFullscreenMode(PWINDOW, Fullscreen::FSMODE_NONE);
 
         if (!PNODE || PNODE->isMaster) {
             // first non-master node
@@ -722,7 +734,7 @@ Config::ErrorResult CMasterAlgorithm::layoutMsg(const std::string_view& sv) {
         if (WINDOWS < 2 || MASTERS < 2)
             return stateErr("nothing to do");
 
-        g_pCompositor->setWindowFullscreenInternal(PWINDOW, FSMODE_NONE);
+        Fullscreen::controller()->setFullscreenMode(PWINDOW, Fullscreen::FSMODE_NONE);
 
         if (!PNODE || !PNODE->isMaster) {
             // first non-master node
@@ -741,7 +753,7 @@ Config::ErrorResult CMasterAlgorithm::layoutMsg(const std::string_view& sv) {
         if (!PWINDOW)
             return noTarget("no window");
 
-        g_pCompositor->setWindowFullscreenInternal(PWINDOW, FSMODE_NONE);
+        Fullscreen::controller()->setFullscreenMode(PWINDOW, Fullscreen::FSMODE_NONE);
 
         if (command == "orientationleft")
             m_workspaceData.explicitOrientation = ORIENTATION_LEFT;
@@ -774,11 +786,11 @@ Config::ErrorResult CMasterAlgorithm::layoutMsg(const std::string_view& sv) {
             ratio = std::stof(std::string{exact ? vars[2] : vars[1]});
         } catch (...) { return invalidArg("bad ratio"); }
 
-        const auto PNODE = getNodeFromWindow(PWINDOW);
-
         const auto PMASTER = getMasterNode();
+        if (!PMASTER)
+            return stateErr("no master node");
 
-        float      newRatio = exact ? ratio : PMASTER->percMaster + ratio;
+        float newRatio      = exact ? ratio : PMASTER->percMaster + ratio;
         PMASTER->percMaster = std::clamp(newRatio, 0.05f, 0.95f);
 
         recalculate();
@@ -963,7 +975,7 @@ void CMasterAlgorithm::runOrientationCycle(Hyprutils::String::CVarList2* vars, i
     if (!PWINDOW)
         return;
 
-    g_pCompositor->setWindowFullscreenInternal(PWINDOW, FSMODE_NONE);
+    Fullscreen::controller()->setFullscreenMode(PWINDOW, Fullscreen::FSMODE_NONE);
 
     int nextOrPrev = 0;
     for (size_t i = 0; i < cycle.size(); ++i) {
@@ -1338,8 +1350,10 @@ SP<ITarget> CMasterAlgorithm::getNextTarget(SP<ITarget> t, bool next, bool loop)
         return nullptr;
 
     const auto PNODE = getNodeFromTarget(t);
+    if (!PNODE)
+        return nullptr;
 
-    auto       nodes = m_masterNodesData;
+    auto nodes = m_masterNodesData;
     if (!next)
         std::ranges::reverse(nodes);
 

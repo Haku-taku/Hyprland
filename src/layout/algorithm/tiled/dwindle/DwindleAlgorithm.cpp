@@ -1,9 +1,14 @@
 #include "DwindleAlgorithm.hpp"
+#include "../../../../helpers/MiscFunctions.hpp"
+#include "../../../../desktop/view/window/WindowPresentation.hpp"
 
 #include "../../Algorithm.hpp"
 #include "../../../space/Space.hpp"
 #include "../../../target/WindowTarget.hpp"
 #include "../../../LayoutManager.hpp"
+
+#include "../../../../managers/fullscreen/FullscreenController.hpp"
+#include "../../../../managers/fullscreen/handler/FullscreenHandler.hpp"
 
 #include "../../../../config/ConfigValue.hpp"
 #include "../../../../desktop/state/FocusState.hpp"
@@ -51,7 +56,7 @@ void SDwindleNodeData::recalcSizePosRecursive(bool force, bool horizontalOverrid
 
         children[0]->recalcSizePosRecursive(force);
         children[1]->recalcSizePosRecursive(force);
-    } else
+    } else if (!pTarget.expired())
         pTarget->setPositionGlobal(box);
 }
 
@@ -80,7 +85,7 @@ void CDwindleAlgorithm::addTarget(SP<ITarget> target) {
     const auto           MOUSECOORDS = m_overrideFocalPoint.value_or(g_pInputManager->getMouseCoordsInternal());
     const auto           ACTIVE_MON  = Desktop::focusState()->monitor();
 
-    if ((PWORKSPACE == ACTIVE_MON->m_activeWorkspace || (PWORKSPACE->m_isSpecialWorkspace && PMONITOR->m_activeSpecialWorkspace)) && !*PUSEACTIVE) {
+    if ((PWORKSPACE == ACTIVE_MON->m_activeWorkspace || (PWORKSPACE->type() == Workspace::eWorkspaceType::SPECIAL && PMONITOR->m_activeSpecialWorkspace)) && !*PUSEACTIVE) {
         OPENINGON = getNodeFromWindow(
             Desktop::viewState()->hitTest().windowAt(MOUSECOORDS, Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::SKIP_FULLSCREEN_PRIORITY));
 
@@ -92,8 +97,8 @@ void CDwindleAlgorithm::addTarget(SP<ITarget> target) {
 
         if (m_overrideFocalPoint)
             OPENINGON = getClosestNode(*m_overrideFocalPoint);
-        else if (!m_overrideFocalPoint && ACTIVE_WINDOW && !ACTIVE_WINDOW->m_isFloating && ACTIVE_WINDOW != target->window() && ACTIVE_WINDOW->m_workspace == PWORKSPACE &&
-                 ACTIVE_WINDOW->m_isMapped)
+        else if (!m_overrideFocalPoint && ACTIVE_WINDOW && !ACTIVE_WINDOW->isFloating() && ACTIVE_WINDOW != target->window() && ACTIVE_WINDOW->m_workspace == PWORKSPACE &&
+                 ACTIVE_WINDOW->mapped())
             OPENINGON = getNodeFromWindow(ACTIVE_WINDOW);
 
         if (!OPENINGON)
@@ -121,7 +126,7 @@ void CDwindleAlgorithm::addTarget(SP<ITarget> target) {
         }
     }
 
-    // if it's the first, it's easy. Make it fullscreen.
+    // if it's the first, it's easy. Make it maximise-sized.
     if (!OPENINGON || OPENINGON->pTarget.lock() == target) {
         PNODE->box = WORK_AREA;
         PNODE->pTarget->setPositionGlobal(PNODE->box);
@@ -261,20 +266,25 @@ void CDwindleAlgorithm::movedTarget(SP<ITarget> target, std::optional<Vector2D> 
 }
 
 void CDwindleAlgorithm::removeTarget(SP<ITarget> target) {
+    if (!target)
+        return;
+
     const auto PNODE = getNodeFromTarget(target);
 
     if (!PNODE) {
-        Log::logger->log(Log::ERR, "onWindowRemovedTiling node null?");
+        LOG(Log::ERR, "onWindowRemovedTiling node null?");
         return;
     }
 
-    if (target->fullscreenMode() != FSMODE_NONE)
-        g_pCompositor->setWindowFullscreenInternal(target->window(), FSMODE_NONE);
+    if (Fullscreen::controller()->isFullscreen(target->window())) {
+        auto window = target->window();
+        Fullscreen::controller()->setFullscreenMode(window, Fullscreen::FSMODE_NONE);
+    }
 
     const auto PPARENT = PNODE->pParent;
 
     if (!PPARENT) {
-        Log::logger->log(Log::DEBUG, "Removing last node (dwindle)");
+        LOG(Log::DEBUG, "Removing last node (dwindle)");
         std::erase(m_dwindleNodesData, PNODE);
         return;
     }
@@ -335,10 +345,10 @@ void CDwindleAlgorithm::resizeTarget(const Vector2D& Δ, SP<ITarget> target, eRe
         SP<SDwindleNodeData> PHOUTER = nullptr;
         SP<SDwindleNodeData> PHINNER = nullptr;
 
-        const auto           LEFT   = corner == CORNER_TOPLEFT || corner == CORNER_BOTTOMLEFT || DISPLAYRIGHT;
-        const auto           TOP    = corner == CORNER_TOPLEFT || corner == CORNER_TOPRIGHT || DISPLAYBOTTOM;
-        const auto           RIGHT  = corner == CORNER_TOPRIGHT || corner == CORNER_BOTTOMRIGHT || DISPLAYLEFT;
-        const auto           BOTTOM = corner == CORNER_BOTTOMLEFT || corner == CORNER_BOTTOMRIGHT || DISPLAYTOP;
+        const auto           LEFT   = edgeLeft(corner) || DISPLAYRIGHT;
+        const auto           TOP    = edgeTop(corner) || DISPLAYBOTTOM;
+        const auto           RIGHT  = edgeRight(corner) || DISPLAYLEFT;
+        const auto           BOTTOM = edgeBottom(corner) || DISPLAYTOP;
         const auto           NONE   = corner == CORNER_NONE;
 
         for (auto PCURRENT = PNODE; PCURRENT && PCURRENT->pParent; PCURRENT = PCURRENT->pParent.lock()) {
@@ -491,6 +501,15 @@ void CDwindleAlgorithm::swapTargets(SP<ITarget> a, SP<ITarget> b) {
 }
 
 void CDwindleAlgorithm::recalculate(eRecalculateReason reason) {
+    if (!m_parent || !m_parent->space())
+        return;
+
+    // Avoid further pos recalc if in fullscreen
+    if (Fullscreen::controller()->hasFullscreen(m_parent->space()->workspace(), true)) {
+        m_defaultFullscreenHandler->syncTargetSizeAndPosition();
+        return;
+    }
+
     calculateWorkspace();
 }
 
@@ -568,19 +587,18 @@ void CDwindleAlgorithm::moveTargetInDirection(SP<ITarget> t, Math::eDirection di
         }
     }
 
-    t->window()->setAnimationsToMove();
-
-    removeTarget(t);
+    t->window()->presentation().setAnimationsToMove();
 
     if (PMONITORFOCAL != m_parent->space()->workspace()->m_monitor) {
         // move with a focal point
 
         if (PMONITORFOCAL->m_activeWorkspace)
-            t->assignToSpace(PMONITORFOCAL->m_activeWorkspace->m_space, FOCAL_POINT);
+            t->assignToSpace(PMONITORFOCAL->m_activeWorkspace->space(), FOCAL_POINT);
 
         return;
     }
 
+    removeTarget(t);
     movedTarget(t, FOCAL_POINT);
 
     // restore focus to the previous position
@@ -597,7 +615,7 @@ void CDwindleAlgorithm::calculateWorkspace() {
     const auto PWORKSPACE = m_parent->space()->workspace();
     const auto PMONITOR   = PWORKSPACE->m_monitor;
 
-    if (!PMONITOR || PWORKSPACE->m_hasFullscreenWindow)
+    if (!PMONITOR || Fullscreen::controller()->hasFullscreen(PWORKSPACE, true))
         return;
 
     const auto TOPNODE = getMasterNode();
@@ -677,7 +695,7 @@ Config::ErrorResult CDwindleAlgorithm::layoutMsg(const std::string_view& sv) {
                 try {
                     angle = std::stoi(std::string{ARGS[1]});
                 } catch (const std::exception& e) {
-                    Log::logger->log(Log::WARN, "Invalid angle argument for rotatesplit: {}", ARGS[1]);
+                    LOG(Log::WARN, "Invalid angle argument for rotatesplit: {}", ARGS[1]);
                     return Config::configError("Invalid angle argument", Config::eConfigErrorLevel::ERROR, Config::eConfigErrorCode::INVALID_ARGUMENT);
                 }
             }
@@ -698,7 +716,7 @@ Config::ErrorResult CDwindleAlgorithm::layoutMsg(const std::string_view& sv) {
         auto direction = ARGS[1];
 
         if (direction.empty()) {
-            Log::logger->log(Log::ERR, "Expected direction for preselect");
+            LOG(Log::ERR, "Expected direction for preselect");
             return Config::configError("No direction for preselect", Config::eConfigErrorLevel::ERROR, Config::eConfigErrorCode::INVALID_ARGUMENT);
         }
 
@@ -757,7 +775,7 @@ bool CDwindleAlgorithm::toggleSplit(SP<SDwindleNodeData> x) {
     if (!x || !x->pParent)
         return false;
 
-    if (x->pTarget->fullscreenMode() != FSMODE_NONE)
+    if (Fullscreen::controller()->isFullscreen(x->pTarget->window()))
         return false;
 
     x->pParent->splitTop = !x->pParent->splitTop;
@@ -768,7 +786,7 @@ bool CDwindleAlgorithm::toggleSplit(SP<SDwindleNodeData> x) {
 }
 
 bool CDwindleAlgorithm::swapSplit(SP<SDwindleNodeData> x) {
-    if (x->pTarget->fullscreenMode() != FSMODE_NONE || !x->pParent)
+    if (Fullscreen::controller()->isFullscreen(x->pTarget->window()) || !x->pParent)
         return false;
 
     std::swap(x->pParent->children[0], x->pParent->children[1]);
@@ -782,7 +800,7 @@ void CDwindleAlgorithm::rotateSplit(SP<SDwindleNodeData> x, int angle) {
     if (!x || !x->pParent)
         return;
 
-    if (x->pTarget->fullscreenMode() != FSMODE_NONE)
+    if (Fullscreen::controller()->isFullscreen(x->pTarget->window()))
         return;
 
     // normalize the angle to multiples of 90 degrees
@@ -819,7 +837,7 @@ bool CDwindleAlgorithm::moveToRoot(SP<SDwindleNodeData> x, bool stable) {
     if (!x || !x->pParent)
         return false;
 
-    if (x->pTarget->fullscreenMode() != FSMODE_NONE)
+    if (Fullscreen::controller()->isFullscreen(x->pTarget->window()))
         return false;
 
     // already at root

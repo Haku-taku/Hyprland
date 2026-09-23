@@ -12,6 +12,7 @@
 #include "../notification/NotificationOverlay.hpp"
 #include "../output/Monitor.hpp"
 #include "../protocols/XDGOutput.hpp"
+#include "../render/Renderer.hpp"
 #include "../xwayland/XWayland.hpp"
 
 #include <vector>
@@ -41,7 +42,7 @@ void CMonitorLayoutController::checkOverlapsAndNotify() const {
 
     for (const auto& m : State::monitorState()->monitors()) {
         if (!monitorRegion.copy().intersect(m->logicalBox()).empty()) {
-            Log::logger->log(Log::ERR, "Monitor {}: detected overlap with layout", m->m_name);
+            LOG(Log::ERR, "Monitor {}: detected overlap with layout", m->m_name);
             Notification::overlay()->addNotification(I18n::i18nEngine()->localize(I18n::TXT_KEY_NOTIF_INVALID_MONITOR_LAYOUT, {{"name", m->m_name}}), CHyprColor{}, 15000,
                                                      ICON_WARNING);
 
@@ -63,8 +64,12 @@ void CMonitorLayoutController::arrange() const {
         arrangeableMonitors.push_back(arrangeable);
     }
 
-    Log::logger->log(Log::DEBUG, "arrangeMonitors: {} to arrange", arrangeableMonitors.size());
+    LOG(Log::DEBUG, "arrangeMonitors: {} to arrange", arrangeableMonitors.size());
     State::monitorPositionController()->arrange(arrangeableMonitors, *PXWLFORCESCALEZERO);
+
+    for (const auto& m : State::monitorState()->monitors()) {
+        g_pHyprRenderer->arrangeLayersForMonitor(m->m_id);
+    }
 
     PROTO::xdgOutput->updateAllOutputs();
     Event::bus()->m_events.monitor.layoutChanged.emit();

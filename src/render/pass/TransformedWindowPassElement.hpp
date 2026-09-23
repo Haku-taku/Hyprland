@@ -11,10 +11,14 @@ class CTransformedWindowPassElement : public IPassElement {
         CBox                    currentBox;
         CBox                    blurBox;
         bool                    blur              = false;
+        bool                    blurUsesLive      = false;
         float                   blurA             = 1.F;
         int                     blurRound         = 0;
         float                   blurRoundingPower = 2.F;
+        CBox                    transformedBox;
         SMotionBlurData         motionBlur;
+        bool                    standalone        = false;
+        bool                    renderingSnapshot = false;
     };
 
     CTransformedWindowPassElement(SData&& data);

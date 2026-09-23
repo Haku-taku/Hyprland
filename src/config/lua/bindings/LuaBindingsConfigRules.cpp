@@ -3,6 +3,7 @@
 
 #include "../objects/LuaLayerRule.hpp"
 #include "../objects/LuaWindowRule.hpp"
+#include "../objects/LuaWorkspaceRule.hpp"
 
 #include "../types/LuaConfigBool.hpp"
 #include "../types/LuaConfigCssGap.hpp"
@@ -25,13 +26,13 @@
 #include "../../../desktop/rule/windowRule/WindowRule.hpp"
 #include "../../../desktop/rule/windowRule/WindowRuleEffectContainer.hpp"
 #include "../../../layout/LayoutManager.hpp"
+#include "../../../keybinds/Resolver.hpp"
 #include "../../../layout/supplementary/WorkspaceAlgoMatcher.hpp"
 #include "../../../animation/AnimationManager.hpp"
 #include "../../../managers/input/InputManager.hpp"
 #include "../../../managers/input/trackpad/TrackpadGestures.hpp"
 #include "../../../managers/input/trackpad/gestures/CloseGesture.hpp"
 #include "../../../managers/input/trackpad/gestures/CursorZoomGesture.hpp"
-#include "../../../managers/input/trackpad/gestures/DispatcherGesture.hpp"
 #include "../../../managers/input/trackpad/gestures/FloatGesture.hpp"
 #include "../../../managers/input/trackpad/gestures/FullscreenGesture.hpp"
 #include "../../../managers/input/trackpad/gestures/LuaFunctionGesture.hpp"
@@ -43,6 +44,8 @@
 #include "../../../managers/permissions/DynamicPermissionManager.hpp"
 
 #include <hyprutils/utils/ScopeGuard.hpp>
+
+#include <vector>
 
 using namespace Config;
 using namespace Config::Lua;
@@ -352,15 +355,20 @@ static int hlCurve(lua_State* L) {
         {
             CScopeGuard x([L] { lua_pop(L, 1); });
 
-            lua_getfield(L, 2, "dampening");
+            lua_getfield(L, 2, "damping");
+            if (lua_isnil(L, -1)) {
+                lua_pop(L, 1);
+                // Old typo form, please add a deprecation notice if you ever plan on removing these
+                lua_getfield(L, 2, "dampening");
+            }
 
             if (!lua_isnumber(L, -1))
-                return Internal::configError(L, std::format("hl.curve(\"{}\"): dampening expects a number", name));
+                return Internal::configError(L, std::format("hl.curve(\"{}\"): damping expects a number", name));
 
             curve.damping = lua_tonumber(L, -1);
 
             if (curve.damping <= 0.5F)
-                return Internal::configError(L, std::format("hl.curve(\"{}\"): dampening expects a number >= 0.5", name));
+                return Internal::configError(L, std::format("hl.curve(\"{}\"): damping expects a number >= 0.5", name));
         }
 
         {
@@ -445,7 +453,7 @@ static int hlAnimation(lua_State* L) {
         if (!Animation::mgr()->springExists(springName))
             return Internal::configError(L, std::format(R"(hl.animation("{}"): no such spring "{}")", leaf, springName));
 
-        curveName = "spring:" + springName;
+        curveName = std::format("spring:{}", springName);
     } else
         return Internal::configError(L, std::format(R"(hl.animation("{}"): bezier or spring is required)", leaf));
 
@@ -519,9 +527,9 @@ static int hlEnv(lua_State* L) {
     if (dbus) {
         std::string CMD;
 #ifdef USES_SYSTEMD
-        CMD = "systemctl --user import-environment '" + name + "' && hash dbus-update-activation-environment 2>/dev/null && ";
+        CMD = std::format("systemctl --user import-environment '{}' && hash dbus-update-activation-environment 2>/dev/null && ", name);
 #endif
-        CMD += "dbus-update-activation-environment --systemd '" + name + "'";
+        CMD += std::format("dbus-update-activation-environment --systemd '{}'", name);
         if (mgr->isFirstLaunch())
             Config::Supplementary::executor()->addExecOnce({CMD, false});
         else
@@ -597,6 +605,8 @@ static int hlPermission(lua_State* L) {
         type = PERMISSION_TYPE_PLUGIN;
     else if (typeStr == "keyboard" || typeStr == "keeb")
         type = PERMISSION_TYPE_KEYBOARD;
+    else if (typeStr == "input-capture")
+        type = PERMISSION_TYPE_INPUT_CAPTURE;
 
     if (modeStr == "ask")
         mode = PERMISSION_RULE_ALLOW_MODE_ASK;
@@ -641,13 +651,9 @@ static int hlWorkspaceRule(lua_State* L) {
         enabled = lua_toboolean(L, -1) != 0;
     lua_pop(L, 1);
 
-    const auto& [wsId, wsName, isAutoID] = getWorkspaceIDNameFromString(wsStr);
-
     Config::CWorkspaceRule wsRule;
     wsRule.m_workspaceString = wsStr;
-    wsRule.m_workspaceName   = wsName;
-    wsRule.m_workspaceId     = isAutoID ? WORKSPACE_INVALID : wsId;
-    wsRule.m_enabled         = enabled;
+    wsRule.setEnabled(enabled);
 
     lua_pushnil(L);
     while (lua_next(L, 1) != 0) {
@@ -721,11 +727,12 @@ static int hlWorkspaceRule(lua_State* L) {
         lua_pop(L, 1);
     }
 
-    Config::workspaceRuleMgr()->replaceOrAdd(std::move(wsRule));
+    const auto RULE = Config::workspaceRuleMgr()->replaceOrAdd(std::move(wsRule));
 
     Supplementary::refresher()->scheduleRefresh(Supplementary::REFRESH_MONITOR_STATES | Config::Supplementary::REFRESH_WINDOW_STATES);
 
-    return 0;
+    Objects::CLuaWorkspaceRule::push(L, RULE);
+    return 1;
 }
 
 static int hlGesture(lua_State* L) {
@@ -748,7 +755,47 @@ static int hlGesture(lua_State* L) {
     if (direction == TRACKPAD_GESTURE_DIR_NONE)
         return Internal::configError(L, std::format("hl.gesture: invalid direction \"{}\"", dirParser.parsed()));
 
+    struct SLuaGestureRefGuard {
+        lua_State*       L = nullptr;
+        std::vector<int> refs;
+        bool             disarm = false;
+
+        ~SLuaGestureRefGuard() {
+            if (disarm)
+                return;
+
+            for (const auto ref : refs) {
+                if (ref != LUA_NOREF && ref != LUA_REFNIL)
+                    luaL_unref(L, LUA_REGISTRYINDEX, ref);
+            }
+        }
+
+        void add(int ref) {
+            if (ref != LUA_NOREF && ref != LUA_REFNIL)
+                refs.emplace_back(ref);
+        }
+
+        bool hasRefs() const {
+            return !refs.empty();
+        }
+
+        void registerWithManager() {
+            const auto mgr = Lua::mgr();
+            if (!mgr)
+                return;
+
+            for (const auto ref : refs) {
+                mgr->registerLuaRef(ref);
+            }
+
+            disarm = true;
+        }
+    } luaGestureRefs{.L = L};
+
     int functionRef = LUA_NOREF;
+    int startRef    = LUA_NOREF;
+    int updateRef   = LUA_NOREF;
+    int endRef      = LUA_NOREF;
 
     {
         // check if the action arg is a lua fn, that's fine
@@ -758,7 +805,53 @@ static int hlGesture(lua_State* L) {
         if (lua_isfunction(L, -1)) {
             lua_pushvalue(L, -1);
             functionRef = luaL_ref(L, LUA_REGISTRYINDEX);
-            Lua::mgr()->registerLuaRef(functionRef);
+            luaGestureRefs.add(functionRef);
+        } else if (lua_istable(L, -1)) {
+            const int actionIdx = lua_gettop(L);
+
+            auto      readCallback = [&](const char* name) -> std::expected<int, std::string> {
+                lua_getfield(L, actionIdx, name);
+
+                if (lua_isnil(L, -1)) {
+                    lua_pop(L, 1);
+                    return LUA_NOREF;
+                }
+
+                if (!lua_isfunction(L, -1)) {
+                    lua_pop(L, 1);
+                    return std::unexpected(std::format("action.{} must be a function", name));
+                }
+
+                const int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+                luaGestureRefs.add(ref);
+                return ref;
+            };
+
+            auto startResult = readCallback("start");
+            if (!startResult) {
+                lua_pop(L, 1);
+                return Internal::configError(L, std::format("hl.gesture: {}", startResult.error()));
+            }
+            startRef = *startResult;
+
+            auto updateResult = readCallback("update");
+            if (!updateResult) {
+                lua_pop(L, 1);
+                return Internal::configError(L, std::format("hl.gesture: {}", updateResult.error()));
+            }
+            updateRef = *updateResult;
+
+            auto endResult = readCallback("finish");
+            if (!endResult) {
+                lua_pop(L, 1);
+                return Internal::configError(L, std::format("hl.gesture: {}", endResult.error()));
+            }
+            endRef = *endResult;
+
+            if (startRef == LUA_NOREF && updateRef == LUA_NOREF && endRef == LUA_NOREF) {
+                lua_pop(L, 1);
+                return Internal::configError(L, "hl.gesture: action callback table must define at least one of start, update, end, or finish");
+            }
         }
 
         lua_pop(L, 1);
@@ -785,7 +878,7 @@ static int hlGesture(lua_State* L) {
 
 #undef GET_ACTION_STRING
 
-    uint32_t modMask = 0;
+    Input::ModifierMask modMask = Input::HL_MODIFIER_NONE;
     lua_getfield(L, 1, "mods");
     if (!lua_isnil(L, -1)) {
         CLuaConfigString modsParser("");
@@ -794,20 +887,26 @@ static int hlGesture(lua_State* L) {
             lua_pop(L, 1);
             return Internal::configError(L, std::format("hl.gesture: field \"mods\": {}", modsErr.message));
         }
-        modMask = g_pKeybindManager->stringToModMask(modsParser.parsed());
+        modMask = Keybinds::modMaskFromString(modsParser.parsed());
     }
     lua_pop(L, 1);
 
     float deltaScale = 1.F;
     lua_getfield(L, 1, "scale");
     if (!lua_isnil(L, -1)) {
-        CLuaConfigFloat scaleParser(1.F, 0.1F, 10.F);
+        CLuaConfigFloat scaleParser(1.F, -10.F, 10.F);
         auto            scaleErr = scaleParser.parse(L);
         if (scaleErr.errorCode != PARSE_ERROR_OK) {
             lua_pop(L, 1);
             return Internal::configError(L, std::format("hl.gesture: field \"scale\": {}", scaleErr.message));
         }
         deltaScale = scaleParser.parsed();
+        // must be [-10.F, -0.1F] ∪ [0.1F, 10.F]
+        // < -10 and >10 checks are made above
+        if (deltaScale > -0.1F && deltaScale < 0.1F) {
+            lua_pop(L, 1);
+            return Internal::configError(L, "hl.gesture: field \"scale\": value must be between -10 and -0.1 or between 0.1 and 10 - It's currently: {}", deltaScale);
+        }
     }
     lua_pop(L, 1);
 
@@ -826,9 +925,14 @@ static int hlGesture(lua_State* L) {
 
     std::expected<void, std::string> result;
 
+    if (luaGestureRefs.hasRefs() && !Lua::mgr())
+        return Internal::configError(L, "hl.gesture: internal error: lua callback manager unavailable");
+
     if (functionRef != LUA_NOREF) {
         // this is a lua fn gesture
         result = g_pTrackpadGestures->addGesture(makeUnique<CLuaFunctionGesture>(functionRef), fingerCount, direction, modMask, deltaScale, disableInhibit);
+    } else if (startRef != LUA_NOREF || updateRef != LUA_NOREF || endRef != LUA_NOREF) {
+        result = g_pTrackpadGestures->addGesture(makeUnique<CLuaFunctionGesture>(startRef, updateRef, endRef), fingerCount, direction, modMask, deltaScale, disableInhibit);
     } else {
         CLuaConfigString actionParser("");
         auto             actionErr = Internal::parseTableField(L, 1, "action", actionParser);
@@ -863,6 +967,8 @@ static int hlGesture(lua_State* L) {
 
     if (!result)
         return Internal::configError(L, std::format("hl.gesture: {}", result.error()));
+
+    luaGestureRefs.registerWithManager();
 
     return 0;
 }

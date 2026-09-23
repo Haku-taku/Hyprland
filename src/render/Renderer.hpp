@@ -7,7 +7,10 @@
 #include <hyprutils/utils/ScopeGuard.hpp>
 #include <list>
 #include <optional>
+#include <vector>
+#include <utility>
 #include "OpenGL.hpp"
+#include "blur/Provider.hpp"
 #include "./SyncFDManager.hpp"
 #include "./pass/Pass.hpp"
 #include "./pass/BorderPassElement.hpp"
@@ -36,13 +39,13 @@
 #include <hyprgraphics/resource/resources/TextResource.hpp>
 
 struct SMonitorRule;
-class CWorkspace;
 class CInputPopup;
 class IHLBuffer;
 class CEventLoopTimer;
 class CToplevelExportProtocolManager;
 class CInputManager;
 struct SSessionLockSurface;
+struct SBackdropScope;
 namespace Screenshare {
     class CScreenshareFrame;
 };
@@ -121,8 +124,6 @@ namespace Render {
         wl_event_source*                    m_crashingLoop       = nullptr;
         wl_event_source*                    m_cursorTicker       = nullptr;
 
-        std::vector<CHLBufferReference>     m_usedAsyncBuffers;
-
         struct {
             int                                          hotspotX      = 0;
             int                                          hotspotY      = 0;
@@ -145,11 +146,12 @@ namespace Render {
 
         virtual SP<IRenderbuffer>    getOrCreateRenderbuffer(SP<Aquamarine::IBuffer> buffer,
                                                              uint32_t                fmt); // TODO? move to protected and fix CPointerManager::renderHWCursorBuffer
-        bool                         commitPendingAndDoExplicitSync(PHLMONITOR pMonitor);  // TODO? move to protected and fix CMonitorFrameScheduler::onPresented
-        SRenderData                  m_renderData;                                         // TODO? move to protected and fix CRenderPass
-        SP<ITexture>                 m_screencopyDeniedTexture;                            // TODO? make readonly
-        uint                         m_failedAssetsNo     = 0;                             // TODO? make readonly
-        bool                         m_reloadScreenShader = true;                          // at launch it can be set
+        bool                         commitPendingAndDoExplicitSync(PHLMONITOR pMonitor, std::optional<Monitor::CDamageRing::CTransaction> damage = std::nullopt,
+                                                                    const CRegion& renderedDamage = {}); // TODO? move to protected and fix CMonitorFrameScheduler::onPresented
+        SRenderData                  m_renderData;                                                       // TODO? move to protected and fix CRenderPass
+        SP<ITexture>                 m_screencopyDeniedTexture;                                          // TODO? make readonly
+        uint                         m_failedAssetsNo     = 0;                                           // TODO? make readonly
+        bool                         m_reloadScreenShader = true;                                        // at launch it can be set
         CTimer                       m_globalTimer;
 
         void                         draw(WP<IPassElement> element, const CRegion& damage = {});
@@ -180,39 +182,44 @@ namespace Render {
         SP<ITexture>                 loadAsset(const std::string& filename);
         virtual bool                 shouldUseNewBlurOptimizations(PHLLS pLayer, PHLWINDOW pWindow);
         virtual bool                 explicitSyncSupported()                                                                                                     = 0;
+        virtual bool                 fp16Supported()                                                                                                             = 0;
         virtual std::vector<SDRMFormat> getDRMFormats()                                                                                                          = 0;
         virtual std::vector<uint64_t>   getDRMFormatModifiers(DRMFormat format)                                                                                  = 0;
         virtual SP<IFramebuffer>        createFB(const std::string& name = "")                                                                                   = 0;
         virtual void                    disableScissor()                                                                                                         = 0;
         virtual void                    blend(bool enabled)                                                                                                      = 0;
         virtual void                    drawShadow(const CBox& box, int round, float roundingPower, int range, const Config::CGradientValueData& color, float a) = 0;
-        virtual void drawShadow(const CBox& box, int round, float roundingPower, int range, const Config::CGradientValueData& grad1, const Config::CGradientValueData& grad2,
-                                float lerp, float a)                                                                                                             = 0;
-        virtual void drawGlow(const CBox& box, int round, float roundingPower, int range, const Config::CGradientValueData& color, float a)                      = 0;
-        virtual void drawGlow(const CBox& box, int round, float roundingPower, int range, const Config::CGradientValueData& grad1, const Config::CGradientValueData& grad2,
-                              float lerp, float a)                                                                                                               = 0;
-        virtual void setViewport(int x, int y, int width, int height)                                                                                            = 0;
+        virtual void     drawShadow(const CBox& box, int round, float roundingPower, int range, const Config::CGradientValueData& grad1, const Config::CGradientValueData& grad2,
+                                    float lerp, float a)                                                                                                         = 0;
+        virtual void     drawGlow(const CBox& box, int round, float roundingPower, int range, const Config::CGradientValueData& color, float a)                  = 0;
+        virtual void     drawGlow(const CBox& box, int round, float roundingPower, int range, const Config::CGradientValueData& grad1, const Config::CGradientValueData& grad2,
+                                  float lerp, float a)                                                                                                           = 0;
+        virtual void     setViewport(int x, int y, int width, int height)                                                                                        = 0;
 
-        bool         preBlurQueued(PHLMONITORREF pMonitor);
-        void         pushMonitorTransformEnabled(bool enabled);
-        void         popMonitorTransformEnabled();
-        bool         monitorTransformEnabled();
-        void         sendFrameEventsToWorkspace(PHLMONITOR pMonitor, PHLWORKSPACE pWorkspace, const Time::steady_tp& now);
+        bool             preBlurQueued(PHLMONITORREF pMonitor);
+        void             sendFrameEventsToWorkspace(PHLMONITOR pMonitor, PHLWORKSPACE pWorkspace, const Time::steady_tp& now);
 
-        void         setProjectionType(const Vector2D& fbSize);
-        void         setProjectionType(eRenderProjectionType projectionType);
-        Mat3x3       getBoxProjection(const CBox& box, std::optional<eTransform> transform = std::nullopt);
-        Mat3x3       projectBoxToTarget(const CBox& box, std::optional<eTransform> transform = std::nullopt);
+        void             setProjectionType(const Vector2D& fbSize);
+        void             setProjectionType(eRenderProjectionType projectionType);
+        Mat3x3           getBoxProjection(const CBox& box, std::optional<eTransform> transform = std::nullopt);
+        Mat3x3           projectBoxToTarget(const CBox& box, std::optional<eTransform> transform = std::nullopt);
 
-        SP<ITexture> blurMainFramebuffer(float a, CRegion* originalDamage);
-        virtual SP<ITexture> blurFramebuffer(SP<IFramebuffer> source, float a, CRegion* originalDamage) = 0;
-        void                 preBlurForCurrentMonitor(CRegion* fakeDamage);
+        SP<IFramebuffer> blurMainFramebuffer(float strength, const CRegion& originalDamage, const Render::SBlurContext& context = {});
+        void             beginBackdropScope(SP<SBackdropScope> scope);
+        void             endBackdropScope(SP<SBackdropScope> scope);
+        virtual SP<IFramebuffer> blurFramebuffer(SP<IFramebuffer> source, float strength, const CRegion& originalDamage, const Render::SBlurContext& context = {}) = 0;
+        virtual void             refreshBlurProvider()                                                                                                             = 0;
+        virtual void             expandBlurDamage(CRegion& damage, float multiplier = 1.F) const                                                                   = 0;
+        virtual bool             blurProviderIsAnimated() const                                                                                                    = 0;
+        virtual bool             blurProviderRequiresLiveBlur() const                                                                                              = 0;
+        void                     scheduleFrameForAnimatedBlur(const CRegion& damage, bool usesPrecomputedBlur);
+        void                     preBlurForCurrentMonitor(const CRegion& fakeDamage);
 
-        SCMSettings          getCMSettings(const NColorManagement::PImageDescription imageDescription, const NColorManagement::PImageDescription targetImageDescription,
-                                           SP<CWLSurfaceResource> surface = nullptr, bool modifySDR = false, float sdrMinLuminance = -1.0f, int sdrMaxLuminance = -1,
-                                           bool shouldUseSurface = false);
-        void                 clearCMSettingsCache();
-        virtual bool         reloadShaders(const std::string& path = "") = 0;
+        SCMSettings              getCMSettings(const NColorManagement::PImageDescription imageDescription, const NColorManagement::PImageDescription targetImageDescription,
+                                               SP<CWLSurfaceResource> surface = nullptr, bool modifySDR = false, float sdrMinLuminance = -1.0f, int sdrMaxLuminance = -1,
+                                               bool shouldUseSurface = false);
+        void                     clearCMSettingsCache();
+        virtual bool             reloadShaders(const std::string& path = "") = 0;
 
       protected:
         virtual void              renderOffToMain(SP<IFramebuffer> off)                                         = 0;
@@ -221,8 +228,8 @@ namespace Render {
         void                      setDamage(const CRegion& damage_, std::optional<CRegion> finalDamage);
         // if RENDER_MODE_NORMAL, provided damage will be written to.
         // otherwise, it will be the one used.
-        bool         beginRender(PHLMONITOR pMonitor, CRegion& damage, eRenderMode mode = RENDER_MODE_NORMAL, SP<IHLBuffer> buffer = {}, SP<IFramebuffer> fb = nullptr,
-                                 bool simple = false);
+        bool beginRender(PHLMONITOR pMonitor, CRegion& damage, eRenderMode mode = RENDER_MODE_NORMAL, SP<IHLBuffer> buffer = {}, SP<IFramebuffer> fb = nullptr, bool simple = false,
+                         std::optional<Monitor::CDamageRing::CTransaction>* damageTransaction = nullptr);
 
         virtual bool beginRenderInternal(PHLMONITOR pMonitor, CRegion& damage, bool simple = false) {
             return false;
@@ -250,16 +257,16 @@ namespace Render {
 
         SP<ITexture>                       m_lockDeadTexture;
         SP<ITexture>                       m_lockDead2Texture;
+        SP<ITexture>                       m_lockDead3Texture;
         SP<ITexture>                       m_lockTtyTextTexture;
-        CRenderPass*                       m_currentPass             = nullptr;
-        bool                               m_monitorTransformEnabled = false; // do not modify directly
-        std::stack<bool>                   m_monitorTransformStack;
+        CRenderPass*                       m_currentPass = nullptr;
 
         void                               handleFullscreenSettings(PHLMONITOR pMonitor);
 
         // old private:
         void arrangeLayerArray(PHLMONITOR, const std::vector<PHLLSREF>&, bool, CBox*);
         void renderWorkspace(PHLMONITOR pMonitor, PHLWORKSPACE pWorkspace, const Time::steady_tp& now, const CBox& geometry);
+        void renderIME(PHLMONITOR pMonitor, const Time::steady_tp& now, const CBox& geometry);
         void renderWorkspaceWindowsFullscreen(PHLMONITOR, PHLWORKSPACE, const Time::steady_tp&); // renders workspace windows (fullscreen) (tiled, floating, pinned, but no special)
         void renderWorkspaceWindows(PHLMONITOR, PHLWORKSPACE, const Time::steady_tp&); // renders workspace windows (no fullscreen) (tiled, floating, pinned, but no special)
         void renderAllClientsForWorkspace(PHLMONITOR pMonitor, PHLWORKSPACE pWorkspace, const Time::steady_tp& now, const Vector2D& translate = {0, 0}, const float& scale = 1.f);
@@ -278,10 +285,6 @@ namespace Render {
         SP<ITexture>                      m_missingAssetTexture;
         ASP<Hyprgraphics::CImageResource> m_backgroundResource;
         bool                              m_backgroundResourceFailed = false;
-
-        bool                              shouldBlur(PHLLS ls);
-        bool                              shouldBlur(PHLWINDOW w);
-        bool                              shouldBlur(WP<Desktop::View::CPopup> p);
 
         bool                              m_cursorHidden            = false;
         bool                              m_cursorHiddenByCondition = false;
@@ -303,6 +306,13 @@ namespace Render {
         std::vector<SP<IRenderbuffer>> m_renderbuffers;
         std::vector<PHLWINDOWREF>      m_renderUnfocused;
         SP<CEventLoopTimer>            m_renderUnfocusedTimer;
+
+        struct SBackdropCapture {
+            SP<SBackdropScope> scope;
+            SP<IFramebuffer>   framebuffer;
+        };
+
+        std::vector<SBackdropCapture> m_backdropCaptures;
 
         friend class CRenderPass;
         friend class Render::GL::CHyprOpenGLImpl;
