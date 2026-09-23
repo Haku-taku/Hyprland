@@ -450,12 +450,88 @@ bool CPluginManager::removePluginRepo(const SPluginRepoIdentifier& identifier) {
 eHeadersErrors CPluginManager::headersValid() {
     const auto HLVER = getHyprlandVersion(false);
 
-    if (!std::filesystem::exists(std::format("{}/share/pkgconfig/hyprland.pc", DataState::getHeadersPath())))
-        return HEADERS_MISSING;
+    // First check hyprpm-managed headers
+    if (std::filesystem::exists(std::format("{}/share/pkgconfig/hyprland.pc", DataState::getHeadersPath()))) {
+        // find headers commit
+        const std::string& cmd     = std::format("PKG_CONFIG_PATH=\"{}\" pkgconf --cflags --keep-system-cflags hyprland", getPkgConfigPath());
+        auto               headers = execAndGet(cmd);
 
-    // find headers commit
-    const std::string& cmd     = std::format("PKG_CONFIG_PATH=\"{}\" pkgconf --cflags --keep-system-cflags hyprland", getPkgConfigPath());
-    auto               headers = execAndGet(cmd);
+        if (!headers.contains("-I/"))
+            return HEADERS_MISSING;
+
+        headers.pop_back(); // pop newline
+
+        std::string verHeader;
+
+        while (!headers.empty()) {
+            const auto PATH = headers.substr(0, headers.find(" -I/", 3));
+
+            if (headers.find(" -I/", 3) != std::string::npos)
+                headers = headers.substr(headers.find("-I/", 3));
+            else
+                headers = "";
+
+            if (PATH.ends_with("protocols"))
+                continue;
+
+            verHeader = std::format("{}/hyprland/src/version.h", trim(PATH.substr(2)));
+            break;
+        }
+
+        if (verHeader.empty())
+            return HEADERS_CORRUPTED;
+
+        // read header
+        std::ifstream ifs(verHeader);
+        if (!ifs.good())
+            return HEADERS_CORRUPTED;
+
+        std::string verHeaderContent((std::istreambuf_iterator<char>(ifs)), (std::istreambuf_iterator<char>()));
+        ifs.close();
+
+        const auto HASHPOS = verHeaderContent.find("#define GIT_COMMIT_HASH");
+
+        if (HASHPOS == std::string::npos || HASHPOS + 23 >= verHeaderContent.length())
+            return HEADERS_CORRUPTED;
+
+        std::string_view hash = verHeaderContent;
+        hash.remove_prefix(HASHPOS + 23);
+        hash = hash.substr(0, hash.find_first_of('\n'));
+
+        const auto FIRSTQUOTE = hash.find_first_of('"');
+        if (FIRSTQUOTE == std::string_view::npos)
+            return HEADERS_CORRUPTED;
+
+        hash.remove_prefix(FIRSTQUOTE + 1);
+
+        const auto SECONDQUOTE = hash.find_first_of('"');
+        if (SECONDQUOTE == std::string_view::npos)
+            return HEADERS_CORRUPTED;
+
+        hash = hash.substr(0, SECONDQUOTE);
+
+        if (hash != HLVER.hash)
+            return HEADERS_MISMATCHED;
+
+        // check ABI hash too
+        const auto GLOBALSTATE = DataState::getGlobalState();
+
+        if (GLOBALSTATE.headersAbiCompiled != HLVER.abiHash)
+            return HEADERS_ABI_MISMATCH;
+
+        return HEADERS_OK;
+    }
+
+    // Fall back to system-installed headers
+    return systemHeadersValid();
+}
+
+eHeadersErrors CPluginManager::systemHeadersValid() {
+    const auto HLVER = getHyprlandVersion(false);
+
+    // Run pkgconf without hyprpm-specific path to check system-installed headers
+    const std::string cmd     = "pkgconf --cflags --keep-system-cflags hyprland";
+    auto              headers = execAndGet(cmd);
 
     if (!headers.contains("-I/"))
         return HEADERS_MISSING;
@@ -514,12 +590,6 @@ eHeadersErrors CPluginManager::headersValid() {
     if (hash != HLVER.hash)
         return HEADERS_MISMATCHED;
 
-    // check ABI hash too
-    const auto GLOBALSTATE = DataState::getGlobalState();
-
-    if (GLOBALSTATE.headersAbiCompiled != HLVER.abiHash)
-        return HEADERS_ABI_MISMATCH;
-
     return HEADERS_OK;
 }
 
@@ -540,9 +610,31 @@ bool CPluginManager::updateHeaders(bool force) {
 
     const auto CURRENTHEADERS = headersValid();
 
-    if (!force && (CURRENTHEADERS == HEADERS_OK || CURRENTHEADERS == HEADERS_ABI_MISMATCH)) {
-        std::println("\n{}", successString("Headers up to date."));
-        return true;
+    if (!force) {
+        if (CURRENTHEADERS == HEADERS_OK || CURRENTHEADERS == HEADERS_ABI_MISMATCH) {
+            if (!std::filesystem::exists(std::format("{}/share/pkgconfig/hyprland.pc", DataState::getHeadersPath()))) {
+                std::println("\n{}", successString("System Hyprland headers found, skipping update."));
+                // update the ABI compiled hash so subsequent operations pass ABI checks
+                auto GLOBALSTATE               = DataState::getGlobalState();
+                GLOBALSTATE.headersAbiCompiled = HLVER.abiHash;
+                DataState::updateGlobalState(GLOBALSTATE);
+            } else {
+                std::println("\n{}", successString("Headers up to date."));
+            }
+            return true;
+        }
+    } else {
+        // even with --force, skip header update if system headers are available and
+        // hyprpm-managed headers don't exist. Use --force-headers to override.
+        if (!m_bForceHeaders && systemHeadersValid() == HEADERS_OK && !std::filesystem::exists(std::format("{}/share/pkgconfig/hyprland.pc", DataState::getHeadersPath()))) {
+            std::println("\n{}", successString("System Hyprland headers found, skipping update."));
+            std::println("{}", infoString("Use --force-headers to force a header rebuild if needed."));
+
+            auto GLOBALSTATE               = DataState::getGlobalState();
+            GLOBALSTATE.headersAbiCompiled = HLVER.abiHash;
+            DataState::updateGlobalState(GLOBALSTATE);
+            return true;
+        }
     }
 
     CProgressBar progress;
