@@ -1368,7 +1368,10 @@ void CMonitor::changeWorkspace(const PHLWORKSPACE& pWorkspace, bool internal, bo
     if (!internal) {
         g_pInputManager->unconstrainMouse();
         g_pInputManager->m_emptyFocusCursorSet = false;
-        g_pInputManager->releaseAllMouseButtons();
+
+        // only release mouse buttons when there is not active drag in progress
+        if (!g_layoutManager->dragController()->target())
+            g_pInputManager->releaseAllMouseButtons();
     }
 
     const auto POLDWORKSPACE = m_activeWorkspace;
@@ -1394,6 +1397,12 @@ void CMonitor::changeWorkspace(const PHLWORKSPACE& pWorkspace, bool internal, bo
         for (auto const& w : Desktop::windowState()->windows()) {
             if (w->m_workspace == POLDWORKSPACE && (w->m_state & WINDOW_STATE_PINNED))
                 w->layoutTarget()->assignToSpace(pWorkspace->space());
+        }
+
+        // move dragged window
+        if (auto DRAG_TARGET = g_layoutManager->dragController()->target()) {
+            if (const auto WINDOW = DRAG_TARGET->window(); WINDOW && WINDOW->m_workspace == POLDWORKSPACE)
+                DRAG_TARGET->assignToSpace(pWorkspace->space());
         }
 
         if (!noFocus && !Desktop::focusState()->monitor()->m_activeSpecialWorkspace &&
