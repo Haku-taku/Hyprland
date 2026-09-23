@@ -25,10 +25,12 @@
 #include "../../../../managers/fullscreen/FullscreenController.hpp"
 #include "../../../../layout/algorithm/tiled/scrolling/ScrollingFullscreenHandler.hpp"
 
+#include <cstdlib>
 #include <hyprutils/string/VarList2.hpp>
 #include <hyprutils/string/VarList.hpp>
 #include <hyprutils/string/ConstVarList.hpp>
 #include <hyprutils/utils/ScopeGuard.hpp>
+#include <optional>
 
 using namespace Hyprutils::String;
 using namespace Hyprutils::Utils;
@@ -720,7 +722,8 @@ void CScrollingAlgorithm::focusOnInput(SP<ITarget> target, eInputMode input) {
 }
 
 void CScrollingAlgorithm::newTarget(SP<ITarget> target) {
-    auto droppingOn = Desktop::focusState()->window();
+    const auto MOUSECOORDS = g_pInputManager->getMouseCoordsInternal();
+    auto       droppingOn  = Desktop::focusState()->window();
 
     if (droppingOn && droppingOn->layoutTarget() == target)
         droppingOn = Desktop::viewState()->hitTest().windowAt(g_pInputManager->getMouseCoordsInternal(), Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS);
@@ -729,8 +732,44 @@ void CScrollingAlgorithm::newTarget(SP<ITarget> target) {
     SP<SColumnData>          droppingColumn = droppingData ? droppingData->column.lock() : nullptr;
     const auto               width          = target->window()->m_ruleApplicator->static_.scrollingWidth;
 
+    const auto               getColWidth = [&]() -> float {
+        if (m_lastRemovedTarget.lock() == target && m_lastRemovedColumnWidth.has_value())
+            return *m_lastRemovedColumnWidth;
+        return width.value_or(defaultColumnWidth());
+    };
+
     if (!droppingColumn) {
-        auto col = m_scrollingData->add(width);
+        int64_t insertAfter = sc<int64_t>(m_scrollingData->columns.size()) - 1;
+
+        if (!m_scrollingData->columns.empty()) {
+            float   bestLeft = std::numeric_limits<float>::max();
+            int64_t bestIdx  = -1;
+
+            for (size_t i = 0; i < m_scrollingData->columns.size(); ++i) {
+                const auto& col      = m_scrollingData->columns[i];
+                float       colLeft  = std::numeric_limits<float>::max();
+                float       colRight = std::numeric_limits<float>::lowest();
+                for (const auto& td : col->targetDatas) {
+                    if (const auto W = td->target.lock(); W && validMapped(W->window())) {
+                        const auto BOX = W->window()->getWindowIdealBoundingBoxIgnoreReserved();
+                        colLeft        = std::min(colLeft, sc<float>(BOX.x));
+                        colRight       = std::max(colRight, sc<float>(BOX.x + BOX.width));
+                    }
+                }
+                if (colLeft > colRight)
+                    continue;
+
+                if (MOUSECOORDS.x < colLeft && colLeft < bestLeft) {
+                    bestLeft = colLeft;
+                    bestIdx  = sc<int64_t>(i);
+                }
+            }
+
+            if (bestIdx >= 0)
+                insertAfter = bestIdx - 1;
+        }
+
+        auto col = m_scrollingData->add(insertAfter, getColWidth() > 0 ? std::optional<float>(getColWidth()) : width);
         col->add(target);
         m_scrollingData->fitCol(col);
     } else {
@@ -761,24 +800,29 @@ void CScrollingAlgorithm::newTarget(SP<ITarget> target) {
                     droppingColumn->add(target);
             } else {
                 // we are within the edge drop, make a new column
-
+                std::optional<float> COL_W = std::nullopt;
+                if (const auto stored_width = getColWidth(); stored_width > 0)
+                    COL_W = std::optional(stored_width);
                 if (WITHIN_RANGE_LEFT)
-                    droppingColumn = m_scrollingData->add(m_scrollingData->idx(droppingColumn) - 1);
+                    droppingColumn = m_scrollingData->add(m_scrollingData->idx(droppingColumn) - 1, COL_W);
                 else
-                    droppingColumn = m_scrollingData->add(m_scrollingData->idx(droppingColumn));
+                    droppingColumn = m_scrollingData->add(m_scrollingData->idx(droppingColumn), COL_W);
 
                 droppingColumn->add(target);
             }
 
             m_scrollingData->fitCol(droppingColumn);
         } else {
-            auto idx = m_scrollingData->idx(droppingColumn);
-            auto col = idx == -1 ? m_scrollingData->add(width) : m_scrollingData->add(idx, width);
+            auto idx  = m_scrollingData->idx(droppingColumn);
+            auto colW = getColWidth();
+            auto col  = idx == -1 ? m_scrollingData->add(colW > 0 ? std::optional<float>(colW) : width) : m_scrollingData->add(idx, colW > 0 ? std::optional<float>(colW) : width);
             col->add(target);
             m_scrollingData->fitCol(col);
         }
     }
 
+    m_lastRemovedTarget.reset();
+    m_lastRemovedColumnWidth.reset();
     m_scrollingData->recalculate();
 }
 
@@ -791,6 +835,13 @@ void CScrollingAlgorithm::removeTarget(SP<ITarget> target) {
 
     if (!DATA)
         return;
+
+    // store the column width ratio before removal, so drag-and-drop
+    // can preserve the original column width when inserting into a new column
+    if (auto col = DATA->column.lock(); col) {
+        m_lastRemovedTarget      = target;
+        m_lastRemovedColumnWidth = col->getColumnWidth();
+    }
 
     // remove the FS state of a tiled window when it is being removed/floated -- This exception needs to exist for the float case as it's default handled
     if (m_scrollingFullscreenHandler->isFullscreen(target, std::nullopt, std::nullopt))

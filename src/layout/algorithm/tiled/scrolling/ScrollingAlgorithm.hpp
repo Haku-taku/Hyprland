@@ -134,6 +134,17 @@ namespace Layout::Tiled {
             INPUT_MODE_HARD
         };
 
+        void carryRemovedColumnWidth(SP<ITarget> target, std::optional<float> width) {
+            m_lastRemovedTarget      = target;
+            m_lastRemovedColumnWidth = width;
+        }
+        std::optional<float> lastRemovedColumnWidth() const {
+            return m_lastRemovedColumnWidth;
+        }
+        SP<ITarget> lastRemovedTarget() const {
+            return m_lastRemovedTarget.lock();
+        }
+
       private:
         SP<SScrollingData>                                                            m_scrollingData;
 
@@ -156,9 +167,14 @@ namespace Layout::Tiled {
         void                     moveTargetTo(SP<ITarget> t, Math::eDirection dir, bool silent);
         void                     focusOnInput(SP<ITarget> target, eInputMode input);
 
-        void                     expelTarget(SP<SScrollingTargetData> tdata, SP<SColumnData> srcCol, std::optional<int64_t> insertIdx);
+        // stores the column width ratio of the most recently removed tiled target,
+        // so drag-and-drop can restore the original column width
+        WP<ITarget>          m_lastRemovedTarget;
+        std::optional<float> m_lastRemovedColumnWidth;
 
-        float                    defaultColumnWidth();
+        void                 expelTarget(SP<SScrollingTargetData> tdata, SP<SColumnData> srcCol, std::optional<int64_t> insertIdx);
+
+        float                defaultColumnWidth();
 
         friend struct SScrollingData;
         friend class Fullscreen::ScrollingFullscreenHandler::CScrollingFullscreenHandler;

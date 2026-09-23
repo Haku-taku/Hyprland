@@ -19,16 +19,20 @@ namespace Layout::Supplementary {
         CDragStateController()  = default;
         ~CDragStateController() = default;
 
-        void           dragBegin(SP<ITarget> target, eMouseBindMode mode, std::optional<Layout::eRectCorner> forcedEdge = std::nullopt, bool exclusiveDeviceGrab = false);
-        bool           dragEnd();
+        void                 dragBegin(SP<ITarget> target, eMouseBindMode mode, std::optional<Layout::eRectCorner> forcedEdge = std::nullopt, bool exclusiveDeviceGrab = false);
+        bool                 dragEnd();
 
-        void           mouseMove(const Vector2D& mousePos);
-        eMouseBindMode mode() const;
-        bool           wasDraggingWindow() const;
-        bool           dragThresholdReached() const;
-        void           resetDragThresholdReached();
-        bool           draggingTiled() const;
-        bool           exclusiveDeviceGrab() const;
+        void                 mouseMove(const Vector2D& mousePos);
+        eMouseBindMode       mode() const;
+        bool                 wasDraggingWindow() const;
+        bool                 dragThresholdReached() const;
+        void                 resetDragThresholdReached();
+        bool                 draggingTiled() const;
+        bool                 exclusiveDeviceGrab() const;
+
+        std::optional<float> draggingTiledColumnWidth() const {
+            return m_draggingTiledColumnWidth;
+        }
 
         /*
             Called to try to pick up window for dragging.
@@ -61,6 +65,7 @@ namespace Layout::Supplementary {
         Vector2D                           m_beginDragPositionXY;
         Vector2D                           m_beginDragSizeXY;
         Vector2D                           m_draggingWindowOriginalFloatSize;
+        std::optional<float>               m_draggingTiledColumnWidth;
         Layout::eRectCorner                m_grabbedCorner = sc<Layout::eRectCorner>(0) /* CORNER_NONE */;
         std::optional<Layout::eRectCorner> m_forcedGrabbedCorner;
     };

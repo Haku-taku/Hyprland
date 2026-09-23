@@ -3,6 +3,8 @@
 #include "../../desktop/view/window/WindowGroupMembership.hpp"
 #include "../../desktop/view/window/WindowPresentation.hpp"
 
+#include "../algorithm/Algorithm.hpp"
+#include "../algorithm/tiled/scrolling/ScrollingAlgorithm.hpp"
 #include "../LayoutManager.hpp"
 #include "../space/Space.hpp"
 #include "../target/WindowTarget.hpp"
@@ -141,6 +143,12 @@ bool CDragStateController::updateDragWindow() {
             m_draggingTiled = true;
 
             MAPDRAGHOTSPOT(DRAGGINGTARGET, PRE_DRAG_BOX);
+
+            if (DRAGGINGTARGET->space() && DRAGGINGTARGET->space()->algorithm()) {
+                if (const auto ALGO = dynamic_cast<Tiled::CScrollingAlgorithm*>(DRAGGINGTARGET->space()->algorithm()->tiledAlgo().get());
+                    ALGO && ALGO->lastRemovedTarget() == DRAGGINGTARGET)
+                    m_draggingTiledColumnWidth = ALGO->lastRemovedColumnWidth();
+            }
         }
     }
 
@@ -309,6 +317,11 @@ bool CDragStateController::dragEnd() {
     }
 
     if (m_draggingTiled) {
+        if (m_draggingTiledColumnWidth.has_value() && draggingTarget->space() && draggingTarget->space()->algorithm()) {
+            if (auto* ALGO = dynamic_cast<Tiled::CScrollingAlgorithm*>(draggingTarget->space()->algorithm()->tiledAlgo().get()))
+                ALGO->carryRemovedColumnWidth(draggingTarget, m_draggingTiledColumnWidth);
+        }
+
         // make sure to check if we are floating because drag into group could make us tiled already
         if (draggingTarget->floating())
             g_layoutManager->changeFloatingMode(draggingTarget);
@@ -323,6 +336,7 @@ bool CDragStateController::dragEnd() {
     Desktop::focusState()->fullWindowFocus(draggingTarget->window(), Desktop::FOCUS_REASON_DESKTOP_STATE_CHANGE);
 
     m_wasDraggingWindow = false;
+
     if (isResizeMode(m_dragMode))
         setClientResizingState(draggingTarget, false);
 
@@ -330,6 +344,7 @@ bool CDragStateController::dragEnd() {
     m_exclusiveDeviceGrab = false;
     m_draggingTiled       = false;
     m_forcedGrabbedCorner.reset();
+    m_draggingTiledColumnWidth.reset();
     return true;
 }
 
