@@ -60,6 +60,10 @@ static bool isValidHash(std::string_view sv) {
     return std::ranges::all_of(sv, [](const char& c) { return std::isdigit(c) || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'); });
 }
 
+static bool isLocalPath(const std::string& path) {
+    return !path.empty() && (path.starts_with('/') || path.starts_with("./") || path.starts_with("~/") || std::filesystem::exists(path));
+}
+
 CPluginManager::CPluginManager() {
     if (NSys::isSuperuser())
         Debug::die("Don't run hyprpm as a superuser.");
@@ -188,6 +192,24 @@ bool CPluginManager::addNewPluginRepo(const std::string& url, const std::string&
         return false;
     }
 
+    const bool bLocal = isLocalPath(url);
+
+    if (bLocal) {
+        // validate local path: must be a git repo
+        if (!std::filesystem::exists(url)) {
+            std::println(stderr, "\n{}", failureString("Local path does not exist: {}", url));
+            return false;
+        }
+        if (!std::filesystem::is_directory(url)) {
+            std::println(stderr, "\n{}", failureString("Local path is not a directory: {}", url));
+            return false;
+        }
+        if (!std::filesystem::exists(url + "/.git")) {
+            std::println(stderr, "\n{}", failureString("Local path is not a git repository: {}", url));
+            return false;
+        }
+    }
+
     CProgressBar progress;
     progress.m_iMaxSteps        = 5;
     progress.m_iSteps           = 0;
@@ -212,9 +234,12 @@ bool CPluginManager::addNewPluginRepo(const std::string& url, const std::string&
         return false;
     }
 
-    progress.printMessageAbove(infoString("Cloning {}", url));
+    std::string ret;
 
-    std::string ret = execAndGet(std::format("cd {} && git clone --recursive '{}' {}", getTempRoot(), url, USERNAME));
+    progress.printMessageAbove(infoString("{} {}", bLocal ? "Cloning from" : "Cloning", url));
+
+    // git clone works for both remote URLs and local paths
+    ret = execAndGet(std::format("cd {} && git clone --recursive '{}' {}", getTempRoot(), url, USERNAME));
 
     if (!std::filesystem::exists(std::format("{}/.git", m_szWorkingPluginDirectory))) {
         std::println(stderr, "\n{}", failureString("Could not clone the plugin repository. shell returned:\n{}", ret));
@@ -365,13 +390,22 @@ bool CPluginManager::addNewPluginRepo(const std::string& url, const std::string&
     std::string       repohash = execAndGet(std::format("cd {} && git rev-parse HEAD", m_szWorkingPluginDirectory));
     if (repohash.length() > 0)
         repohash.pop_back();
-    auto lastSlash       = url.find_last_of('/');
-    auto secondLastSlash = url.find_last_of('/', lastSlash - 1);
-    repo.name            = pManifest->m_repository.name.empty() ? url.substr(lastSlash + 1) : pManifest->m_repository.name;
-    repo.author          = url.substr(secondLastSlash + 1, lastSlash - secondLastSlash - 1);
-    repo.url             = url;
-    repo.rev             = rev;
-    repo.hash            = repohash;
+    repo.hash = repohash;
+
+    if (bLocal) {
+        repo.name   = pManifest->m_repository.name.empty() ? std::filesystem::path(url).filename().string() : pManifest->m_repository.name;
+        repo.author = "local";
+        repo.url    = url;
+        repo.rev    = rev;
+        repo.local  = true;
+    } else {
+        auto lastSlash       = url.find_last_of('/');
+        auto secondLastSlash = url.find_last_of('/', lastSlash - 1);
+        repo.name            = pManifest->m_repository.name.empty() ? url.substr(lastSlash + 1) : pManifest->m_repository.name;
+        repo.author          = url.substr(secondLastSlash + 1, lastSlash - secondLastSlash - 1);
+        repo.url             = url;
+        repo.rev             = rev;
+    }
     for (auto const& p : pManifest->m_plugins) {
         repo.plugins.push_back(SPlugin{p.name, std::format("{}/{}", m_szWorkingPluginDirectory, p.output), false, p.failed});
     }
@@ -719,9 +753,29 @@ bool CPluginManager::updatePlugins(bool forceUpdateAll) {
 
         createSafeDirectory(m_szWorkingPluginDirectory);
 
-        progress.printMessageAbove(infoString("Cloning {}", repo.url));
+        std::string ret;
 
-        std::string ret = execAndGet(std::format("cd {} && git clone --recursive '{}' {}", getTempRoot(), repo.url, USERNAME));
+        // check if source has changed
+        if (!update && repo.local) {
+            // local repo: check HEAD at source path before cloning
+            std::string hash = execAndGet("git -C '" + repo.url + "' rev-parse HEAD");
+            if (!hash.empty())
+                hash.pop_back();
+            update = update || hash != repo.hash;
+        }
+
+        if (!update) {
+            std::filesystem::remove_all(m_szWorkingPluginDirectory);
+            progress.printMessageAbove(successString("repository {} is up-to-date.", repo.name));
+            progress.m_iSteps++;
+            progress.print();
+            continue;
+        }
+
+        // git clone works for both remote URLs and local paths
+        progress.printMessageAbove(infoString("{} {}", repo.local ? "Cloning from" : "Cloning", repo.url));
+
+        ret = execAndGet(std::format("cd {} && git clone --recursive '{}' {}", getTempRoot(), repo.url, USERNAME));
 
         if (!std::filesystem::exists(std::format("{}/.git", m_szWorkingPluginDirectory))) {
             std::println(stderr, "\n{}", failureString("could not clone repo: shell returned: {}", ret));
@@ -741,8 +795,8 @@ bool CPluginManager::updatePlugins(bool forceUpdateAll) {
             }
         }
 
-        if (!update) {
-            // check if git has updates
+        if (!update && !repo.local) {
+            // check if cloned git repo has updates
             std::string hash = execAndGet(std::format("cd {} && git rev-parse HEAD", m_szWorkingPluginDirectory));
             if (!hash.empty())
                 hash.pop_back();
@@ -863,8 +917,12 @@ bool CPluginManager::updatePlugins(bool forceUpdateAll) {
         // add repo toml to DataState
         SPluginRepository newrepo = repo;
         newrepo.plugins.clear();
-        execAndGet(std::format("cd {} && git pull --recurse-submodules && git reset --hard --recurse-submodules",
-                               m_szWorkingPluginDirectory)); // repo hash in the state.toml has to match head and not any pin
+        if (!repo.local) {
+            execAndGet(std::format("cd {} && git pull --recurse-submodules && git reset --hard --recurse-submodules",
+                                   m_szWorkingPluginDirectory)); // repo hash in the state.toml has to match head and not any pin
+        }
+        // for local repos, the hash was already computed from the source before cloning;
+        // for remote repos, get the HEAD hash after pull
         std::string repohash = execAndGet(std::format("cd {} && git rev-parse HEAD", m_szWorkingPluginDirectory));
         if (!repohash.empty())
             repohash.pop_back();

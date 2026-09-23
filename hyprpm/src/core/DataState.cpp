@@ -96,7 +96,8 @@ void DataState::addNewPluginRepo(const SPluginRepository& repo) {
             {"author", repo.author},
             {"hash", repo.hash},
             {"url", repo.url},
-            {"rev", repo.rev}
+            {"rev", repo.rev},
+            {"local", repo.local}
         }}
     };
     for (auto const& p : repo.plugins) {
@@ -233,6 +234,7 @@ std::vector<SPluginRepository> DataState::getAllRepositories() {
         repo.author = AUTHOR;
         repo.url    = URL;
         repo.rev    = REV;
+        repo.local  = STATE["repository"]["local"].value_or(false);
 
         for (const auto& [key, val] : STATE) {
             if (key == "repository")
