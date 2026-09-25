@@ -17,6 +17,12 @@ namespace NCMType {
         CM_ADOBE,    // adobe colorspace
     };
 
+    inline bool shouldKeepHDRMode(bool configuredHDR, bool autoHDREnabled, bool surfaceIsHDR) {
+        // A monitor configured to HDR mode must not be forced back to SDR just because the fullscreen content is SDR.
+        // The HDR baseline remains in effect until the monitor configuration changes.
+        return configuredHDR || (autoHDREnabled && surfaceIsHDR);
+    }
+
     std::optional<eCMType> fromString(const std::string cmType);
     std::string            toString(eCMType cmType);
 }

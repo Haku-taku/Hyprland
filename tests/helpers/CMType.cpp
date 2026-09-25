@@ -47,3 +47,11 @@ TEST(Helpers, cmTypeRoundTrip) {
     EXPECT_EQ(fromString(toString(CM_DP3)), CM_DP3);
     EXPECT_EQ(fromString(toString(CM_ADOBE)), CM_ADOBE);
 }
+
+TEST(Helpers, shouldKeepHDRModeForConfiguredHDRMonitor) {
+    EXPECT_TRUE(shouldKeepHDRMode(true, false, false));
+    EXPECT_TRUE(shouldKeepHDRMode(true, true, false));
+    EXPECT_TRUE(shouldKeepHDRMode(false, true, true));
+    EXPECT_FALSE(shouldKeepHDRMode(false, true, false));
+    EXPECT_FALSE(shouldKeepHDRMode(false, false, false));
+}

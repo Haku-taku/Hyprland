@@ -2422,7 +2422,10 @@ void IHyprRenderer::handleFullscreenSettings(PHLMONITOR pMonitor) {
             // we have a surface with image description
             if (SURF && SURF->m_colorManagement.valid() && SURF->m_colorManagement->hasImageDescription()) {
                 const bool surfaceIsHDR = SURF->m_colorManagement->isHDR();
-                wantHDR                 = *PAUTOHDR && surfaceIsHDR;
+                // A monitor configured for HDR should keep its HDR baseline while fullscreen SDR content is active.
+                // Otherwise the monitor is forced back to SDR on every SDR fullscreen transition, and re-enters HDR
+                // immediately when the fullscreen window closes.
+                wantHDR = NCMType::shouldKeepHDRMode(configuredHDR, *PAUTOHDR, surfaceIsHDR);
                 if (FULLSCREEN_WINDOW && FULLSCREEN_WINDOW->m_ruleApplicator->noAutoHDR().valueOrDefault())
                     wantHDR = configuredHDR;
                 if (surfaceIsHDR && !SURF->m_colorManagement->isWindowsScRGB() && !pMonitor->m_lastScanout.expired()) {
