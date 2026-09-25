@@ -899,8 +899,10 @@ void CInputManager::processMouseDownNormal(const IPointer::SButtonEvent& e, SP<I
             if (*PFOLLOWMOUSE == 3) // don't refocus on full loose
                 break;
 
-            if ((g_pSeatManager->m_mouse.expired() || !isConstrained()) /* No constraints */
-                && (w && Desktop::focusState()->window() != w) /* window should change */) {
+            if (w && Desktop::focusState()->window() != w) /* window should change */ {
+                if (isConstrained())
+                    unconstrainMouse();
+
                 // a bit hacky
                 // if we only pressed one button, allow us to refocus. m_lCurrentlyHeldButtons.size() > 0 will stick the focus
                 if (m_currentlyHeldButtons.size() == 1) {

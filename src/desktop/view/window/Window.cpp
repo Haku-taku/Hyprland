@@ -1493,7 +1493,7 @@ void CWindow::mapWindow() {
     }
 
     if (!m_ruleApplicator->noFocus().valueOrDefault() && !(m_state & WINDOW_STATE_NO_INITIAL_FOCUS) && (!TRAITS.overrideRedirect || TRAITS.wantsFocus) && !workspaceSilent &&
-        !monitorSilent && (!PFORCEFOCUS || PFORCEFOCUS == m_self.lock()) && !g_pInputManager->isConstrained()) {
+        !monitorSilent && (!PFORCEFOCUS || PFORCEFOCUS == m_self.lock()) && (!g_pInputManager->isConstrained() || m_target->floating())) {
 
         // don't steal pointer focus with X11 when buttons are held (e.g., during drags)
         // if the incoming window is an OR

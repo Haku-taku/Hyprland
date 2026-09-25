@@ -198,10 +198,7 @@ void CLayerSurface::onMap() {
     if (KEYBOARD_EXCLUSIVE)
         g_pInputManager->m_exclusiveKeyboardLSes.push_back(m_self);
 
-    const bool GRABS_KEYBOARD = KEYBOARD_EXCLUSIVE ||
-        (m_layerSurface->m_current.keyboardInteractivity != ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE &&
-         // don't focus if constrained
-         (g_pSeatManager->m_mouse.expired() || !g_pInputManager->isConstrained()));
+    const bool GRABS_KEYBOARD = KEYBOARD_EXCLUSIVE || m_layerSurface->m_current.keyboardInteractivity != ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE;
 
     if (GRABS_KEYBOARD) {
         // TODO: use the new superb really very cool grab
