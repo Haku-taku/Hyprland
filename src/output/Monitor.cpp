@@ -2437,7 +2437,7 @@ NColorManagement::SImageDescription::SPCMasteringLuminances CMonitor::getMasteri
     };
 }
 
-uint32_t CMonitor::getPreferredReadFormat() {
+uint32_t CMonitor::getPreferredReadFormat(bool hdrClient) {
     static const auto PFORCE8BIT = CConfigValue<Config::INTEGER>("misc:screencopy_force_8b");
     static const auto PHDRCOPY   = CConfigValue<Config::INTEGER>("misc:screencopy_hdr");
     static const auto PHDRDEBUG  = CConfigValue<Config::INTEGER>("misc:screencopy_hdr_debug");
@@ -2450,9 +2450,21 @@ uint32_t CMonitor::getPreferredReadFormat() {
     // same signal the mirror itself is built from, and not the scan-out format.
     const bool        MIRROR10BIT = m_activeMonitorRule.m_enable10bit;
 
-    // Prototype (vshot): with HDR capture on, keep the mirror's own depth; the
-    // 8-bit default would force the frame down to SDR before it is read.
-    if (*PHDRCOPY)
+    // Prototype (vshot): misc:screencopy_hdr is a global switch, but the pixels
+    // it produces are the output's own encoding, which only a colour-management
+    // -aware client can interpret.  Handing them to anyone else (grim and the
+    // like) would give it a 10-bit buffer it reads as plain sRGB: a silently
+    // wrong, dark image.  So the offer is gated per client: HDR pixels only when
+    // the capture client bound wp_color_manager_v1 (hdrClient).
+    const bool        HDRCOPY = *PHDRCOPY && hdrClient;
+
+    if (*PHDRDEBUG && *PHDRCOPY && !hdrClient)
+        LOG(Log::DEBUG, "screencopy_hdr: client is not colour-management aware, withholding the HDR capture offer");
+
+    // Prototype (vshot): with HDR capture on (and allowed for this client), keep
+    // the mirror's own depth; the 8-bit default would force the frame down to
+    // SDR before it is read.
+    if (HDRCOPY)
         return MIRROR10BIT ? monFmt : DRM_FORMAT_XRGB8888;
 
     // Prototype (vshot): with HDR capture off the mirror is written as sRGB, so
@@ -2460,7 +2472,8 @@ uint32_t CMonitor::getPreferredReadFormat() {
     // only signal a screencopy client has that the buffer holds the output's own
     // HDR pixels (see misc:screencopy_hdr), and a client that read an sRGB buffer
     // as HDR would show the capture wrong.  An SDR output keeps whatever depth
-    // misc:screencopy_force_8b allows.
+    // misc:screencopy_force_8b allows.  This is also the path a client that is
+    // not colour-management aware takes when HDR capture is on.
     const auto OUT_TF  = m_imageDescription ? m_imageDescription->value().transferFunction : CM_TRANSFER_FUNCTION_SRGB;
     const bool OUT_HDR = OUT_TF == CM_TRANSFER_FUNCTION_ST2084_PQ || OUT_TF == CM_TRANSFER_FUNCTION_HLG;
     if (IS10BIT && OUT_HDR) {

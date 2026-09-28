@@ -53,6 +53,12 @@ namespace Screenshare {
         Vector2D                      bufferSize() const;
         PHLMONITOR                    monitor() const; // this will return the correct monitor based on type
 
+        // Whether the capture client may be handed the output's own encoding.
+        // "Aware" means it bound wp_color_manager_v1; that is the same heuristic
+        // the portal path and the frame's image description already rely on, and
+        // it says nothing about how the client uses the manager.
+        bool clientCMAware() const;
+
         struct {
             CSignalT<> stopped;
             CSignalT<> constraintsChanged;
@@ -71,8 +77,9 @@ namespace Screenshare {
         PHLWINDOWREF             m_window;
         CBox                     m_captureBox = {}; // given capture area in logical coordinates (see xdg_output)
 
-        wl_client*               m_client = nullptr;
-        std::string              m_name   = "";
+        wl_client*               m_client        = nullptr;
+        bool                     m_clientCMAware = false;
+        std::string              m_name          = "";
 
         std::vector<DRMFormat>   m_formats;
         Vector2D                 m_bufferSize = Vector2D(0, 0);

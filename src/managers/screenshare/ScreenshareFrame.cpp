@@ -2,7 +2,6 @@
 #include "../../pointer/PointerManager.hpp"
 #include "../SeatManager.hpp"
 #include "../permissions/DynamicPermissionManager.hpp"
-#include "../../protocols/ColorManagement.hpp"
 #include "../../Compositor.hpp"
 #include "../../render/Renderer.hpp"
 #include "../../render/OpenGL.hpp"
@@ -200,7 +199,10 @@ void CScreenshareFrame::renderMonitor() {
     if (TEXTURE->m_imageDescription && g_pHyprRenderer->m_renderData.currentFB->imageDescription())
         LOG(Log::TRACE, "CM: screenshot renderMonitor {} -> {}", TEXTURE->m_imageDescription->value(), g_pHyprRenderer->m_renderData.currentFB->imageDescription()->value());
 
-    const bool IS_CM_AWARE               = PROTO::colorManagement && PROTO::colorManagement->isClientCMAware(m_session->m_client);
+    // Same decision the session made when it offered the format (see
+    // CScreenshareSession::clientCMAware), so an unaware client is always
+    // converted back to sRGB and never receives the output's HDR values.
+    const bool IS_CM_AWARE               = m_session->clientCMAware();
     g_pHyprRenderer->m_renderData.fbSize = m_bufferSize;
     g_pHyprRenderer->setProjectionType(Render::RPT_EXPORT);
     g_pHyprRenderer->m_renderData.transformDamage = false;
@@ -400,7 +402,9 @@ NColorManagement::PImageDescription CScreenshareFrame::captureImageDescription(D
 
     const auto        PMONITOR = m_session->monitor();
     const bool        is10Bit  = NFormatUtils::is10BitFormat(format);
-    const bool        cmAware  = PROTO::colorManagement && PROTO::colorManagement->isClientCMAware(m_session->m_client);
+    // The session decided this when it offered the format; keep using that one
+    // decision so the offer and the description can never disagree.
+    const bool cmAware = m_session->clientCMAware();
 
     // Prototype (vshot): a colour-management-aware client that asked for a
     // 10-bit buffer gets the monitor's own (HDR) description, so the pixels it

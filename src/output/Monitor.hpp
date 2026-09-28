@@ -350,7 +350,9 @@ namespace Monitor {
         NColorManagement::SPCPRimaries                              getMasteringPrimaries();
         NColorManagement::SImageDescription::SPCMasteringLuminances getMasteringLuminances();
 
-        uint32_t                                                    getPreferredReadFormat();
+        // hdrClient: the capture client opted into colour management, so it can
+        // be handed the output's own (HDR) pixels; see misc:screencopy_hdr.
+        uint32_t                                                    getPreferredReadFormat(bool hdrClient);
 
         bool                                                        needsCM();
         /// Can do CM without shader (forDSmode ? check output image description : check workbuffer image description)

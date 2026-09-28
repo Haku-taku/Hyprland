@@ -5,6 +5,7 @@
 #include "../../ipc/s2/S2.hpp"
 #include "../eventLoop/EventLoopManager.hpp"
 #include "../../event/EventBus.hpp"
+#include "../../protocols/ColorManagement.hpp"
 
 using namespace Screenshare;
 
@@ -100,10 +101,17 @@ void CScreenshareSession::calculateConstraints() {
         return;
     }
 
+    // One decision, used for both the format offered here and the image
+    // description the frame is written with (see CScreenshareFrame): only a
+    // colour-management-aware client gets the output's own HDR pixels.
+    m_clientCMAware = PROTO::colorManagement && PROTO::colorManagement->isClientCMAware(m_client);
+
+    const auto primaryFormat = PMONITOR->getPreferredReadFormat(m_clientCMAware);
+
     // TODO: maybe support more that just monitor format in the future?
     m_formats.clear();
-    m_formats.push_back(NFormatUtils::alphaFormat(PMONITOR->getPreferredReadFormat()));
-    m_formats.push_back(PMONITOR->getPreferredReadFormat()); // some clients don't like alpha formats
+    m_formats.push_back(NFormatUtils::alphaFormat(primaryFormat));
+    m_formats.push_back(primaryFormat); // some clients don't like alpha formats
 
     // TODO: hack, we can't bit flip so we'll format flip heh, GL_BGRA_EXT won't work here
     for (auto& format : m_formats) {
@@ -154,6 +162,10 @@ void CScreenshareSession::screenshareEvents(bool startSharing) {
 
 const std::vector<DRMFormat>& CScreenshareSession::allowedFormats() const {
     return m_formats;
+}
+
+bool CScreenshareSession::clientCMAware() const {
+    return m_clientCMAware;
 }
 
 Vector2D CScreenshareSession::bufferSize() const {
