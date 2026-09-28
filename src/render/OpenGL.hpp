@@ -182,6 +182,11 @@ namespace Render::GL {
             uint8_t                wrapX = WRAP_CLAMP_TO_EDGE, wrapY = WRAP_CLAMP_TO_EDGE;
             bool                   cmBackToSRGB   = false;
             bool                   finalMonitorCM = false;
+            // Prototype (vshot): run the colour management even where the
+            // monitor has been put into its "no shader CM" mode (a fullscreen
+            // window's CTM), which a conversion the scan-out path does not
+            // perform itself — the capture mirror, say — still needs.
+            bool                   forceCM        = false;
 
             uint8_t                discardMode    = DISCARD_OPAQUE;
             float                  discardOpacity = 0.f;

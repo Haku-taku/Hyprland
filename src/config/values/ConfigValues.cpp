@@ -599,6 +599,14 @@ std::vector<SP<IValue>> Values::getConfigValues() {
         MS<Bool>("misc:enable_anr_dialog", "whether to enable the ANR (app not responding) dialog when your apps hang", true),
         MS<Int>("misc:anr_missed_pings", "number of missed pings before showing the ANR dialog", 5, {.min = 1, .max = 20}),
         MS<Bool>("misc:screencopy_force_8b", "forces 8 bit screencopy", true),
+        // Prototype (vshot): hand a colour-management-aware capture client an
+        // HDR output's HDR pixels, instead of the sRGB SDR copy screenshare
+        // normally renders.  Off by default: it changes what a screencopy
+        // client sees and keeps HDR in the monitor mirror.
+        MS<Bool>("misc:screencopy_hdr", "prototype: hand HDR pixels to colour-management-aware screencopy clients", false),
+        // Prototype (vshot): log the mirror/colour-management decisions the HDR
+        // capture depends on, so a session can be diagnosed without a TRACE build.
+        MS<Bool>("misc:screencopy_hdr_debug", "prototype: log the HDR screencopy colour-management decisions", false),
         MS<Bool>("misc:disable_scale_notification", "disables notification popup when a monitor fails to set a suitable scale", false),
         MS<Bool>("misc:size_limits_tiled", "whether to apply minsize and maxsize rules to tiled windows", false),
         MS<String>("misc:bell_sound", "path to custom wav/ogg system bell. `none` or an empty string mute it. `default` uses the system's current one.", "default"),

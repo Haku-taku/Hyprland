@@ -36,7 +36,15 @@ namespace Monitor {
       private:
         void                                initFB(SP<Render::IFramebuffer> fb);
         void                                setImageDescription(NColorManagement::PImageDescription imageDescription);
-        NColorManagement::PImageDescription getMirrorTexImageDescription();
+        // The description the monitor mirror framebuffer is written with: the
+        // output's own when HDR capture is on, so a screencopy client reads the
+        // pixels the display shows.  (Prototype: see misc:screencopy_hdr.)
+        NColorManagement::PImageDescription mirrorFBImageDescription();
+        // The description the MRT "unmodified copy" texture is written with,
+        // which stays the SDR one it has always been: its shader branch encodes
+        // into the SDR range, and saveBufferForMirror stops reading it when HDR
+        // capture is on.
+        NColorManagement::PImageDescription mirrorTexImageDescription();
         Vector2D                            mirrorFBDamageSize() const;
 
         struct SResource {

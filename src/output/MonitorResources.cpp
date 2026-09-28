@@ -37,9 +37,9 @@ void CMonitorResources::setImageDescription(NColorManagement::PImageDescription 
     for (const auto& res : m_sizedWorkBuffers)
         res.buffer->setImageDescription(imageDescription);
     if (m_monitorMirrorFB)
-        m_monitorMirrorFB->setImageDescription(getMirrorTexImageDescription());
+        m_monitorMirrorFB->setImageDescription(mirrorFBImageDescription());
     if (m_mirrorTex)
-        m_mirrorTex->m_imageDescription = getMirrorTexImageDescription();
+        m_mirrorTex->m_imageDescription = mirrorTexImageDescription();
     invalidateMirrorFB();
 }
 
@@ -187,9 +187,18 @@ SP<Render::IFramebuffer> CMonitorResources::mirrorFB() {
     if (!m_monitorMirrorFB)
         m_monitorMirrorFB = g_pHyprRenderer->createFB(std::format("Monitor {} mirror FB", m_monitor->m_name));
 
+    const auto DESIRED = mirrorFBImageDescription();
+
     if (!m_monitorMirrorFB->isAllocated()) {
         m_monitorMirrorFB->alloc(m_size.x, m_size.y, m_monitor->m_activeMonitorRule.m_enable10bit ? DRM_FORMAT_XRGB2101010 : DRM_FORMAT_XRGB8888);
-        m_monitorMirrorFB->setImageDescription(getMirrorTexImageDescription());
+        m_monitorMirrorFB->setImageDescription(DESIRED);
+    } else if (const auto CURRENT = m_monitorMirrorFB->imageDescription(); !CURRENT || CURRENT->id() != DESIRED->id()) {
+        // Prototype (vshot): the desired description depends on
+        // misc:screencopy_hdr, which can be toggled at runtime, while a
+        // framebuffer keeps whatever it was allocated with.  Keep them in step,
+        // and drop the stale content that was rendered under the old one.
+        m_monitorMirrorFB->setImageDescription(DESIRED);
+        invalidateMirrorFB();
     }
 
     return m_monitorMirrorFB;
@@ -199,11 +208,29 @@ SP<Render::ITexture> CMonitorResources::getMirrorTexture() {
     return hasMirrorFB() ? mirrorFB()->getTexture() : nullptr;
 }
 
-NColorManagement::PImageDescription CMonitorResources::getMirrorTexImageDescription() {
+NColorManagement::PImageDescription CMonitorResources::mirrorFBImageDescription() {
+    static const auto PHDRCOPY = CConfigValue<Config::INTEGER>("misc:screencopy_hdr");
+
     const auto TF = m_imageDescription->value().transferFunction;
     if (TF == CM_TRANSFER_FUNCTION_GAMMA22 || TF == CM_TRANSFER_FUNCTION_SRGB)
         return m_imageDescription;
 
+    // Prototype (vshot): with HDR capture on, mirror into the output's own
+    // description rather than forcing sRGB here, so the capture reads HDR
+    // pixels and not a copy already mapped down to SDR.  `m_imageDescription`
+    // is the *work buffer's* description (linear light for an HDR monitor), so
+    // the monitor's own description is what the mirror has to carry; only a
+    // ten-bit output's mirror framebuffer can hold it.
+    if (*PHDRCOPY && m_monitor && m_monitor->m_activeMonitorRule.m_enable10bit)
+        return m_monitor->m_imageDescription;
+
+    return DEFAULT_SRGB_IMAGE_DESCRIPTION;
+}
+
+NColorManagement::PImageDescription CMonitorResources::mirrorTexImageDescription() {
+    const auto TF = m_imageDescription->value().transferFunction;
+    if (TF == CM_TRANSFER_FUNCTION_GAMMA22 || TF == CM_TRANSFER_FUNCTION_SRGB)
+        return m_imageDescription;
     return DEFAULT_SRGB_IMAGE_DESCRIPTION;
 }
 
@@ -216,7 +243,7 @@ void CMonitorResources::enableMirror() {
         return;
     m_mirrorTex = g_pHyprRenderer->createTexture();
     m_mirrorTex->allocate({m_size.x, m_size.y}, m_monitor->m_activeMonitorRule.m_enable10bit ? DRM_FORMAT_XRGB2101010 : DRM_FORMAT_XRGB8888);
-    m_mirrorTex->m_imageDescription = getMirrorTexImageDescription();
+    m_mirrorTex->m_imageDescription = mirrorTexImageDescription();
     m_monitor->m_blurFBDirty        = true;
 }
 

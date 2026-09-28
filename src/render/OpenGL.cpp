@@ -1480,9 +1480,9 @@ WP<CShader> CHyprOpenGLImpl::renderToFBInternal(SP<ITexture> tex, const STexture
     if (data.discardActive)
         shaderFeatures |= SH_FEAT_DISCARD;
 
-    const bool skipCM = !*PENABLECM || !m_cmSupported                   /* CM unsupported or disabled */
-        || g_pHyprRenderer->m_renderData.pMonitor->doesNoShaderCM()     /* no shader needed */
-        || !SOURCE_IMAGE_DESCRIPTION->needsCM(TARGET_IMAGE_DESCRIPTION) /* Source and target have matching image descriptions */
+    const bool skipCM = !*PENABLECM || !m_cmSupported                            /* CM unsupported or disabled */
+        || (!data.forceCM && g_pHyprRenderer->m_renderData.pMonitor->doesNoShaderCM()) /* no shader needed */
+        || !SOURCE_IMAGE_DESCRIPTION->needsCM(TARGET_IMAGE_DESCRIPTION)         /* Source and target have matching image descriptions */
         ;
 
     if (g_pHyprRenderer->m_renderData.pMonitor->needsACopyFB())
@@ -2369,14 +2369,44 @@ void CHyprOpenGLImpl::renderInnerGlow(const CBox& box, int round, float rounding
 }
 
 bool CHyprOpenGLImpl::saveBufferForMirror(const CBox& box) {
-    const auto TEX = g_pHyprRenderer->m_renderData.pMonitor->resources()->m_mirrorTex ? g_pHyprRenderer->m_renderData.pMonitor->resources()->m_mirrorTex :
-                                                                                        g_pHyprRenderer->m_renderData.currentFB->getTexture();
+    static const auto PHDRCOPY  = CConfigValue<Config::INTEGER>("misc:screencopy_hdr");
+    static const auto PHDRDEBUG = CConfigValue<Config::INTEGER>("misc:screencopy_hdr_debug");
+
+    const auto        PMONITOR  = g_pHyprRenderer->m_renderData.pMonitor;
+    const auto        RESOURCES = PMONITOR->resources();
+
+    // Prototype (vshot): with HDR capture on the mirror has to hold the HDR
+    // pixels the display is showing.  The MRT "unmodified copy" texture
+    // (m_mirrorTex) can never carry them: its shader branch maps every pixel
+    // into sRGB over the SDR luminance range, which is what clamped every
+    // capture at SDR white.  Mirror the work buffer itself instead -- it is
+    // linear light, and the target description below takes it to the output's
+    // own (PQ) space, HDR highlights and all.
+    //
+    // The conversion that then needs to happen has to run even while a fullscreen
+    // window has put the monitor into its no-shader-CM mode: the display's own
+    // scan-out does not need it there, but a capture rendered into another
+    // framebuffer does.  That is `forceCM` below, and it is keyed on HDR capture
+    // being on rather than on the bypass, which needs an MRT the session may not
+    // have -- which is exactly the fullscreen case it is for.
+    const bool MIRROR_HDR        = *PHDRCOPY && PMONITOR->m_activeMonitorRule.m_enable10bit;
+    const bool MIRROR_WORKBUFFER = MIRROR_HDR && RESOURCES->m_mirrorTex;
+
+    const auto TEX = MIRROR_WORKBUFFER                                   ? g_pHyprRenderer->m_renderData.currentFB->getTexture() :
+        RESOURCES->m_mirrorTex                                           ? RESOURCES->m_mirrorTex :
+                                                                           g_pHyprRenderer->m_renderData.currentFB->getTexture();
     if (!TEX) {
         LOG(Log::ERR, "Invalid source texture for mirror");
         return false;
     }
-    auto fb    = g_pHyprRenderer->m_renderData.pMonitor->resources()->mirrorFB();
+    auto fb    = RESOURCES->mirrorFB();
     auto guard = g_pHyprRenderer->bindTempFB(fb);
+
+    if (*PHDRDEBUG)
+        LOG(Log::DEBUG, "screencopy_hdr: mirror source={} srcTF={} dstTF={} monitorTF={} forceCM={}", TEX == RESOURCES->m_mirrorTex ? "mirrorTex" : "workBuffer",
+            TEX->m_imageDescription ? sc<int>(TEX->m_imageDescription->value().transferFunction) : -1,
+            fb->imageDescription() ? sc<int>(fb->imageDescription()->value().transferFunction) : -1,
+            PMONITOR->m_imageDescription ? sc<int>(PMONITOR->m_imageDescription->value().transferFunction) : -1, MIRROR_HDR);
 
     LOG(Log::TRACE, "CM: saveBufferForMirror {} -> {}", TEX->m_imageDescription->value(), g_pHyprRenderer->m_renderData.currentFB->imageDescription()->value());
 
@@ -2389,6 +2419,11 @@ bool CHyprOpenGLImpl::saveBufferForMirror(const CBox& box) {
                       .round         = 0,
                       .discardActive = false,
                       .allowCustomUV = false,
+                      // Prototype (vshot): the mirror has to be converted even
+                      // while a fullscreen window has the monitor in its
+                      // no-shader-CTM mode, which skips the conversion the
+                      // display's own scan-out does not need here.
+                      .forceCM       = MIRROR_HDR,
                   });
 
     blend(true);

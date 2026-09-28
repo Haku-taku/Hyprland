@@ -6,6 +6,7 @@
 #include "../../render/Framebuffer.hpp"
 #include "../eventLoop/EventLoopTimer.hpp"
 #include "../../render/Renderer.hpp"
+#include "../../helpers/cm/ColorManagement.hpp"
 
 // TODO: do screenshare damage
 
@@ -189,6 +190,12 @@ namespace Screenshare {
         void renderWindow();
 
         void storeTempFB();
+
+        // Prototype (vshot): the description the capture framebuffer is written
+        // with — the monitor's HDR one for a colour-management-aware client when
+        // misc:screencopy_hdr is on and the buffer is 10-bit, else the sRGB one
+        // screenshare has always used.
+        NColorManagement::PImageDescription captureImageDescription(DRMFormat format);
 
         friend class CScreenshareManager;
         friend class CScreenshareSession;

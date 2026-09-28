@@ -102,6 +102,12 @@ std::string NFormatUtils::drmModifierName(uint64_t mod) {
     return name;
 }
 
+bool NFormatUtils::is10BitFormat(DRMFormat drmFormat) {
+    return drmFormat == DRM_FORMAT_XRGB2101010 || drmFormat == DRM_FORMAT_ARGB2101010 || drmFormat == DRM_FORMAT_XBGR2101010 ||
+        drmFormat == DRM_FORMAT_ABGR2101010 || drmFormat == DRM_FORMAT_RGBX1010102 || drmFormat == DRM_FORMAT_RGBA1010102 ||
+        drmFormat == DRM_FORMAT_BGRX1010102 || drmFormat == DRM_FORMAT_BGRA1010102;
+}
+
 DRMFormat NFormatUtils::alphaFormat(DRMFormat prevFormat) {
     switch (prevFormat) {
         case DRM_FORMAT_XRGB8888: return DRM_FORMAT_ARGB8888;

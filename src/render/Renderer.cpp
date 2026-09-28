@@ -2016,7 +2016,10 @@ SCMSettings IHyprRenderer::getCMSettings(const NColorManagement::PImageDescripti
         ((m_renderData.pMonitor->m_sdrSaturation > 0 && m_renderData.pMonitor->m_sdrSaturation != 1.0f) ||
          (m_renderData.pMonitor->m_sdrBrightness > 0 && m_renderData.pMonitor->m_sdrBrightness != 1.0f));
 
-    const bool needsTonemap = maxLuminance >= dstMaxLuminance * 1.01;
+    // Prototype (vshot): an HDR capture written with the monitor's own
+    // description has the same description on both sides, which is a
+    // passthrough; the tone map would otherwise clamp it down to SDR.
+    const bool needsTonemap = srcId != dstId && maxLuminance >= dstMaxLuminance * 1.01;
 
     auto       result = SCMSettings{
         .sourceTF        = srcTF,

@@ -13,6 +13,7 @@
 #include "../../desktop/state/FocusState.hpp"
 #include "../../render/pass/ClearPassElement.hpp"
 #include "../../render/pass/RectPassElement.hpp"
+#include "../../config/ConfigValue.hpp"
 #include "helpers/cm/ColorManagement.hpp"
 #include "../../managers/fullscreen/FullscreenController.hpp"
 #include <hyprutils/math/Region.hpp>
@@ -394,6 +395,23 @@ void CScreenshareFrame::render() {
     }
 }
 
+NColorManagement::PImageDescription CScreenshareFrame::captureImageDescription(DRMFormat format) {
+    static const auto PHDRCOPY = CConfigValue<Config::INTEGER>("misc:screencopy_hdr");
+
+    const auto        PMONITOR = m_session->monitor();
+    const bool        is10Bit  = NFormatUtils::is10BitFormat(format);
+    const bool        cmAware  = PROTO::colorManagement && PROTO::colorManagement->isClientCMAware(m_session->m_client);
+
+    // Prototype (vshot): a colour-management-aware client that asked for a
+    // 10-bit buffer gets the monitor's own (HDR) description, so the pixels it
+    // reads back are the HDR ones the output is showing.  Everyone else keeps
+    // the sRGB copy screenshare has always produced.
+    if (*PHDRCOPY && is10Bit && cmAware && PMONITOR)
+        return PMONITOR->m_imageDescription;
+
+    return NColorManagement::DEFAULT_SRGB_IMAGE_DESCRIPTION;
+}
+
 bool CScreenshareFrame::copyDmabuf() {
     if (done())
         return false;
@@ -402,7 +420,7 @@ bool CScreenshareFrame::copyDmabuf() {
         LOG(Log::ERR, "Can't copy: failed to begin rendering to dma frame");
         return false;
     }
-    g_pHyprRenderer->m_renderData.currentFB->setImageDescription(NColorManagement::DEFAULT_SRGB_IMAGE_DESCRIPTION);
+    g_pHyprRenderer->m_renderData.currentFB->setImageDescription(captureImageDescription(m_buffer->dmabuf().format));
 
     render();
 
@@ -443,7 +461,7 @@ bool CScreenshareFrame::copyShm() {
 
     auto       outFB = g_pHyprRenderer->createFB();
     outFB->alloc(m_bufferSize.x, m_bufferSize.y, shm.format);
-    outFB->setImageDescription(NColorManagement::DEFAULT_SRGB_IMAGE_DESCRIPTION);
+    outFB->setImageDescription(captureImageDescription(shm.format));
 
     if (!g_pHyprRenderer->beginFullFakeRender(PMONITOR, m_damage, outFB)) {
         LOG(Log::ERR, "Can't copy: failed to begin rendering");

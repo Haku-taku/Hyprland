@@ -2433,13 +2433,38 @@ NColorManagement::SImageDescription::SPCMasteringLuminances CMonitor::getMasteri
 
 uint32_t CMonitor::getPreferredReadFormat() {
     static const auto PFORCE8BIT = CConfigValue<Config::INTEGER>("misc:screencopy_force_8b");
+    static const auto PHDRCOPY   = CConfigValue<Config::INTEGER>("misc:screencopy_hdr");
+    static const auto PHDRDEBUG  = CConfigValue<Config::INTEGER>("misc:screencopy_hdr_debug");
 
-    auto              monFmt = m_output->state->state().drmFormat;
+    const auto        monFmt   = m_output->state->state().drmFormat;
+    const bool        IS10BIT  = NFormatUtils::is10BitFormat(monFmt);
+    // A capture is written into the monitor mirror, and that framebuffer is
+    // allocated ten-bit only when the monitor rule asks for it (see
+    // CMonitorResources::mirrorFB); so the depth offered follows the rule, the
+    // same signal the mirror itself is built from, and not the scan-out format.
+    const bool        MIRROR10BIT = m_activeMonitorRule.m_enable10bit;
 
-    if (*PFORCE8BIT)
-        if (monFmt == DRM_FORMAT_BGRA1010102 || monFmt == DRM_FORMAT_ARGB2101010 || monFmt == DRM_FORMAT_XRGB2101010 || monFmt == DRM_FORMAT_BGRX1010102 ||
-            monFmt == DRM_FORMAT_XBGR2101010)
-            monFmt = DRM_FORMAT_XRGB8888;
+    // Prototype (vshot): with HDR capture on, keep the mirror's own depth; the
+    // 8-bit default would force the frame down to SDR before it is read.
+    if (*PHDRCOPY)
+        return MIRROR10BIT ? monFmt : DRM_FORMAT_XRGB8888;
+
+    // Prototype (vshot): with HDR capture off the mirror is written as sRGB, so
+    // a ten-bit offer on an HDR output must not be made either.  The depth is the
+    // only signal a screencopy client has that the buffer holds the output's own
+    // HDR pixels (see misc:screencopy_hdr), and a client that read an sRGB buffer
+    // as HDR would show the capture wrong.  An SDR output keeps whatever depth
+    // misc:screencopy_force_8b allows.
+    const auto OUT_TF  = m_imageDescription ? m_imageDescription->value().transferFunction : CM_TRANSFER_FUNCTION_SRGB;
+    const bool OUT_HDR = OUT_TF == CM_TRANSFER_FUNCTION_ST2084_PQ || OUT_TF == CM_TRANSFER_FUNCTION_HLG;
+    if (IS10BIT && OUT_HDR) {
+        if (*PHDRDEBUG)
+            LOG(Log::DEBUG, "screencopy_hdr: HDR output offered 8-bit sRGB (HDR capture is off)");
+        return DRM_FORMAT_XRGB8888;
+    }
+
+    if (*PFORCE8BIT && IS10BIT)
+        return DRM_FORMAT_XRGB8888;
 
     return monFmt;
 }
