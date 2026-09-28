@@ -580,7 +580,7 @@ void CMonitor::applyCMType(NCMType::eCMType cmType, NTransferFunction::eTF cmSdr
                                                           .masteringPrimaries  = masteringPrimaries,
                                                           .luminances          = {.min       = DEFAULT_HDR_IMAGE_DESCRIPTION->value().getTFMinLuminance(),
                                                                                   .max       = DEFAULT_HDR_IMAGE_DESCRIPTION->value().getTFMaxLuminance(),
-                                                                                  .reference = DEFAULT_HDR_IMAGE_DESCRIPTION->value().getTFRefLuminance()},
+                                                                                  .reference = sdrWhiteLuminance()},
                                                           .masteringLuminances = masteringLuminances,
                                                           .maxCLL              = maxCLL,
                                                           .maxFALL             = maxFALL});
@@ -594,7 +594,7 @@ void CMonitor::applyCMType(NCMType::eCMType cmType, NTransferFunction::eTF cmSdr
                  .masteringPrimaries  = masteringPrimaries,
                  .luminances          = {.min       = DEFAULT_HDR_IMAGE_DESCRIPTION->value().getTFMinLuminance(),
                                          .max       = DEFAULT_HDR_IMAGE_DESCRIPTION->value().getTFMaxLuminance(),
-                                         .reference = DEFAULT_HDR_IMAGE_DESCRIPTION->value().getTFRefLuminance()},
+                                         .reference = sdrWhiteLuminance()},
                  .masteringLuminances = masteringLuminances,
                  .maxCLL              = maxCLL,
                  .maxFALL             = maxFALL});
@@ -2379,6 +2379,12 @@ int CMonitor::maxLuminance(int defaultValue) {
 int CMonitor::maxAvgLuminance(int defaultValue) {
     return m_maxAvgLuminance >= 0 ? m_maxAvgLuminance :
                                     (m_output->parsedEDID.hdrMetadata.has_value() ? m_output->parsedEDID.hdrMetadata->desiredMaxFrameAverageLuminance : defaultValue);
+}
+
+float CMonitor::sdrWhiteLuminance() const {
+    const float SDR_MAX    = m_activeMonitorRule.m_sdrMaxLuminance > 0 ? m_activeMonitorRule.m_sdrMaxLuminance : SDR_MAX_LUMINANCE;
+    const float BRIGHTNESS = m_activeMonitorRule.m_sdrBrightness > 0 ? m_activeMonitorRule.m_sdrBrightness : 1.F;
+    return SDR_MAX * BRIGHTNESS;
 }
 
 float CMonitor::maxFALL() {

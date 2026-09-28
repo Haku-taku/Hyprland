@@ -329,6 +329,11 @@ namespace Monitor {
         bool                                                        supportsWideColor();
         bool                                                        supportsHDR();
         float                                                       minLuminance(float defaultValue = 0);
+        /// The luminance, in cd/m², that SDR white is rendered at on this output:
+        /// the configured SDR maximum scaled by the SDR brightness.  It is the level
+        /// a colour-managed client's 1.0 stands for, and what the output description
+        /// publishes as `reference`.
+        float                                                       sdrWhiteLuminance() const;
         int                                                         maxLuminance(int defaultValue = 80);
         int                                                         maxAvgLuminance(int defaultValue = 80);
         float                                                       maxFALL();
