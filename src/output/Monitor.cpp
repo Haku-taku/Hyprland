@@ -2437,6 +2437,11 @@ NColorManagement::SImageDescription::SPCMasteringLuminances CMonitor::getMasteri
     };
 }
 
+bool CMonitor::isHDROutput() const {
+    const auto TF = m_imageDescription ? m_imageDescription->value().transferFunction : CM_TRANSFER_FUNCTION_SRGB;
+    return TF == CM_TRANSFER_FUNCTION_ST2084_PQ || TF == CM_TRANSFER_FUNCTION_HLG;
+}
+
 uint32_t CMonitor::getPreferredReadFormat(bool hdrClient) {
     static const auto PFORCE8BIT = CConfigValue<Config::INTEGER>("misc:screencopy_force_8b");
     static const auto PHDRCOPY   = CConfigValue<Config::INTEGER>("misc:screencopy_hdr");
@@ -2464,8 +2469,16 @@ uint32_t CMonitor::getPreferredReadFormat(bool hdrClient) {
     // Prototype (vshot): with HDR capture on (and allowed for this client), keep
     // the mirror's own depth; the 8-bit default would force the frame down to
     // SDR before it is read.
-    if (HDRCOPY)
-        return MIRROR10BIT ? monFmt : DRM_FORMAT_XRGB8888;
+    if (HDRCOPY) {
+        if (MIRROR10BIT)
+            return monFmt;
+        // An HDR output the rule keeps at eight-bit still mirrors into a
+        // ten-bit framebuffer of its own (see CMonitorResources::mirrorFB), so
+        // the offer has to be ten-bit too: the scan-out depth says nothing
+        // about what the mirror can hold.  An SDR output keeps the eight-bit
+        // sRGB copy.
+        return isHDROutput() ? DRM_FORMAT_XRGB2101010 : DRM_FORMAT_XRGB8888;
+    }
 
     // Prototype (vshot): with HDR capture off the mirror is written as sRGB, so
     // a ten-bit offer on an HDR output must not be made either.  The depth is the

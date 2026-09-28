@@ -184,21 +184,35 @@ CRegion CMonitorResources::pendingMirrorFBDamage() const {
 }
 
 SP<Render::IFramebuffer> CMonitorResources::mirrorFB() {
+    static const auto PHDRCOPY = CConfigValue<Config::INTEGER>("misc:screencopy_hdr");
+
     if (!m_monitorMirrorFB)
         m_monitorMirrorFB = g_pHyprRenderer->createFB(std::format("Monitor {} mirror FB", m_monitor->m_name));
 
     const auto DESIRED = mirrorFBImageDescription();
 
-    if (!m_monitorMirrorFB->isAllocated()) {
-        m_monitorMirrorFB->alloc(m_size.x, m_size.y, m_monitor->m_activeMonitorRule.m_enable10bit ? DRM_FORMAT_XRGB2101010 : DRM_FORMAT_XRGB8888);
+    // Prototype (vshot): the mirror's depth and description depend on
+    // misc:screencopy_hdr and the monitor rule, either of which can be toggled
+    // at runtime, while a framebuffer keeps whatever it was allocated with.
+    // Re-evaluate both on every call -- alloc() is a no-op unless the size or
+    // format actually changed -- and keep them in step: an eight-bit buffer
+    // described as the output's HDR space would clip the highlights it is meant
+    // to carry, and a reallocated one holds no valid content.
+    const bool TENBIT = m_monitor && (m_monitor->m_activeMonitorRule.m_enable10bit || (*PHDRCOPY && m_monitor->isHDROutput()));
+
+    const auto FORMAT         = TENBIT ? DRM_FORMAT_XRGB2101010 : DRM_FORMAT_XRGB8888;
+    const bool WAS_ALLOCATED  = m_monitorMirrorFB->isAllocated();
+    const bool FORMAT_CHANGED = m_monitorMirrorFB->m_drmFormat != FORMAT;
+
+    m_monitorMirrorFB->alloc(m_size.x, m_size.y, FORMAT);
+
+    const auto CURRENT = m_monitorMirrorFB->imageDescription();
+    if (FORMAT_CHANGED || !CURRENT || CURRENT->id() != DESIRED->id()) {
         m_monitorMirrorFB->setImageDescription(DESIRED);
-    } else if (const auto CURRENT = m_monitorMirrorFB->imageDescription(); !CURRENT || CURRENT->id() != DESIRED->id()) {
-        // Prototype (vshot): the desired description depends on
-        // misc:screencopy_hdr, which can be toggled at runtime, while a
-        // framebuffer keeps whatever it was allocated with.  Keep them in step,
-        // and drop the stale content that was rendered under the old one.
-        m_monitorMirrorFB->setImageDescription(DESIRED);
-        invalidateMirrorFB();
+
+        // On the very first allocation there is no stale content to drop.
+        if (WAS_ALLOCATED)
+            invalidateMirrorFB();
     }
 
     return m_monitorMirrorFB;
@@ -221,7 +235,7 @@ NColorManagement::PImageDescription CMonitorResources::mirrorFBImageDescription(
     // is the *work buffer's* description (linear light for an HDR monitor), so
     // the monitor's own description is what the mirror has to carry; only a
     // ten-bit output's mirror framebuffer can hold it.
-    if (*PHDRCOPY && m_monitor && m_monitor->m_activeMonitorRule.m_enable10bit)
+    if (m_monitor && *PHDRCOPY && (m_monitor->m_activeMonitorRule.m_enable10bit || m_monitor->isHDROutput()))
         return m_monitor->m_imageDescription;
 
     return DEFAULT_SRGB_IMAGE_DESCRIPTION;

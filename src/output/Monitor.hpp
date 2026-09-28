@@ -354,6 +354,15 @@ namespace Monitor {
         // be handed the output's own (HDR) pixels; see misc:screencopy_hdr.
         uint32_t                                                    getPreferredReadFormat(bool hdrClient);
 
+        // Whether the output's own image description is HDR (PQ or HLG).  This
+        // is about the output, not the capture: the caller decides whether HDR
+        // capture is enabled (misc:screencopy_hdr) and whether the mirror can
+        // carry it.  A screencopy of such an output has to carry its own HDR
+        // pixels even while the display runs at eight-bit, where the eight-bit
+        // SDR copy the mirror would otherwise hold is clamped at SDR white (see
+        // the mirror branch in cm_helpers.glsl) and blows HDR content out.
+        bool                                                        isHDROutput() const;
+
         bool                                                        needsCM();
         /// Can do CM without shader (forDSmode ? check output image description : check workbuffer image description)
         bool                                                               canNoShaderCM(bool forDSmode = false);

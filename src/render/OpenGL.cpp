@@ -2389,7 +2389,11 @@ bool CHyprOpenGLImpl::saveBufferForMirror(const CBox& box) {
     // framebuffer does.  That is `forceCM` below, and it is keyed on HDR capture
     // being on rather than on the bypass, which needs an MRT the session may not
     // have -- which is exactly the fullscreen case it is for.
-    const bool MIRROR_HDR        = *PHDRCOPY && PMONITOR->m_activeMonitorRule.m_enable10bit;
+    // The mirror carries the output's own pixels for a ten-bit rule, and for an
+    // HDR output whose scan-out the rule keeps at eight-bit: the mirror is a
+    // framebuffer of its own, and the eight-bit SDR copy it would otherwise
+    // hold is clamped at SDR white and blows HDR content out.
+    const bool MIRROR_HDR        = *PHDRCOPY && (PMONITOR->m_activeMonitorRule.m_enable10bit || PMONITOR->isHDROutput());
     const bool MIRROR_WORKBUFFER = MIRROR_HDR && RESOURCES->m_mirrorTex;
 
     const auto TEX = MIRROR_WORKBUFFER                                   ? g_pHyprRenderer->m_renderData.currentFB->getTexture() :
@@ -2408,7 +2412,8 @@ bool CHyprOpenGLImpl::saveBufferForMirror(const CBox& box) {
             fb->imageDescription() ? sc<int>(fb->imageDescription()->value().transferFunction) : -1,
             PMONITOR->m_imageDescription ? sc<int>(PMONITOR->m_imageDescription->value().transferFunction) : -1, MIRROR_HDR);
 
-    LOG(Log::TRACE, "CM: saveBufferForMirror {} -> {}", TEX->m_imageDescription->value(), g_pHyprRenderer->m_renderData.currentFB->imageDescription()->value());
+    if (TEX->m_imageDescription && g_pHyprRenderer->m_renderData.currentFB->imageDescription())
+        LOG(Log::TRACE, "CM: saveBufferForMirror {} -> {}", TEX->m_imageDescription->value(), g_pHyprRenderer->m_renderData.currentFB->imageDescription()->value());
 
     blend(false);
 

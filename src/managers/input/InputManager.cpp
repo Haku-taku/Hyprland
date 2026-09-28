@@ -900,7 +900,7 @@ void CInputManager::processMouseDownNormal(const IPointer::SButtonEvent& e, SP<I
                 break;
 
             if (w && Desktop::focusState()->window() != w) /* window should change */ {
-                if (isConstrained())
+                if (isConstrained() && !m_cursorSurfaceInfo.hidden)
                     unconstrainMouse();
 
                 // a bit hacky
