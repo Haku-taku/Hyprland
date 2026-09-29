@@ -66,6 +66,10 @@ bool CScreenshareSession::isActive() {
     return !m_stopped;
 }
 
+bool CScreenshareSession::isStale() {
+    return m_stale;
+}
+
 void CScreenshareSession::init() {
     uintptr_t ptr = m_type == SHARE_WINDOW && !m_window.expired() ? (uintptr_t)m_window.get() : (m_monitor.expired() ? (uintptr_t)nullptr : (uintptr_t)m_monitor.get());
     LOG(Log::TRACE, "Created screenshare session for ({}): {}, {:x}", m_type, m_name, ptr);
@@ -143,6 +147,7 @@ void CScreenshareSession::calculateConstraints() {
 }
 
 void CScreenshareSession::screenshareEvents(bool startSharing) {
+    m_stale = !startSharing;
     if (startSharing && !m_sharing) {
         m_sharing = true;
         IPC::Socket2::sock()->postEvent({.event = "screencast", .data = std::format("1,{}", m_type)});
@@ -184,9 +189,6 @@ UP<CScreenshareFrame> CScreenshareSession::nextFrame(bool overlayCursor) {
     frame->m_self               = frame;
 
     Screenshare::mgr()->m_pendingFrames.emplace_back(frame);
-
-    // there is now a pending frame, so block ds
-    g_pHyprRenderer->m_directScanoutBlocked = true;
 
     return frame;
 }

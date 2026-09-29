@@ -47,6 +47,7 @@ namespace Screenshare {
         UP<CScreenshareFrame> nextFrame(bool overlayCursor);
         void                  stop();
         bool                  isActive();
+        bool                  isStale();
 
         // constraints
         const std::vector<DRMFormat>& allowedFormats() const;
@@ -88,6 +89,7 @@ namespace Screenshare {
 
         SP<CEventLoopTimer>      m_shareStopTimer;
         bool                     m_sharing = false;
+        bool                     m_stale   = false;
 
         struct {
             CHyprSignalListener monitorDestroyed;
@@ -239,6 +241,7 @@ namespace Screenshare {
 
         void                    onOutputCommit(PHLMONITOR monitor);
         bool                    isOutputBeingSSd(PHLMONITOR monitor);
+        bool                    isOutputDSBlocked(PHLMONITOR monitor);
         bool                    outputNeedsCopyFB(PHLMONITOR monitor);
         SOutputCopyFBState      outputCopyFBState(PHLMONITOR monitor);
 
